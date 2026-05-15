@@ -113,7 +113,7 @@ namespace CatnipCart.Track
                 Vector3 fwd = spline.GetDirectionAtDistance(t);
                 Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
 
-                float barrierOffset = roadWidth / 2f + curbWidth + 0.5f;
+                float barrierOffset = roadWidth / 2f + curbWidth + 2.5f; // 2m extra gap from track edge
 
                 // Left barrier
                 CreateBarrierSegment($"BarrierL_{i}", center + right * barrierOffset, fwd, spacing);
@@ -126,19 +126,41 @@ namespace CatnipCart.Track
         {
             var go = new GameObject(name);
             go.transform.SetParent(transform, false);
-            go.transform.position = pos + Vector3.up * barrierHeight * 0.5f;
+            go.transform.position = pos;
             go.transform.rotation = Quaternion.LookRotation(fwd);
 
-            var box = go.AddComponent<BoxCollider>();
-            box.size = new Vector3(0.5f, barrierHeight, length);
+            // Short visible guardrail (0.6m tall — like a real racetrack fence)
+            float railHeight = 0.6f;
 
-            // Visual
-            var visual = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            visual.name = "Visual";
-            visual.transform.SetParent(go.transform, false);
-            visual.transform.localScale = new Vector3(0.5f, barrierHeight, length);
-            visual.GetComponent<Renderer>().material = GetBarrierMat();
-            Destroy(visual.GetComponent<Collider>());
+            // Post
+            var post = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            post.name = "Post";
+            post.transform.SetParent(go.transform, false);
+            post.transform.localPosition = new Vector3(0, railHeight * 0.5f, 0);
+            post.transform.localScale = new Vector3(0.15f, railHeight, 0.15f);
+            post.GetComponent<Renderer>().material = GetBarrierMat();
+            Destroy(post.GetComponent<Collider>());
+
+            // Horizontal rail
+            var rail = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            rail.name = "Rail";
+            rail.transform.SetParent(go.transform, false);
+            rail.transform.localPosition = new Vector3(0, railHeight * 0.7f, 0);
+            rail.transform.localScale = new Vector3(0.1f, 0.12f, length);
+            rail.GetComponent<Renderer>().material = GetCurbMat(); // Red stripe
+            Destroy(rail.GetComponent<Collider>());
+
+            // Small visible collider at rail height
+            var box = go.AddComponent<BoxCollider>();
+            box.center = new Vector3(0, railHeight * 0.5f, 0);
+            box.size = new Vector3(0.3f, railHeight, length);
+
+            // Invisible tall wall — keeps karts from flying over
+            var invisWall = new GameObject("InvisWall");
+            invisWall.transform.SetParent(go.transform, false);
+            invisWall.transform.localPosition = new Vector3(0, 5f, 0);
+            var wallCol = invisWall.AddComponent<BoxCollider>();
+            wallCol.size = new Vector3(0.5f, 10f, length);
         }
 
         Material GetRoadMat()

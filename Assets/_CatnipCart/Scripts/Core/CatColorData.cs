@@ -122,6 +122,136 @@ namespace CatnipCart.Core
             return data;
         }
 
+        public static CatColorData CreateCalico()
+        {
+            var data = CreateInstance<CatColorData>();
+            data.catName = "Calico";
+            data.body = HexToColor("#f59e0b");
+            data.bodyDark = HexToColor("#d97706");
+            data.belly = HexToColor("#fef3c7");
+            data.paw = HexToColor("#ffffff");
+            data.innerEar = HexToColor("#fca5a5");
+            data.eyes = HexToColor("#059669");
+            data.nose = HexToColor("#f472b6");
+            data.kartPrimary = HexToColor("#f59e0b");
+            data.kartSecondary = HexToColor("#ffffff");
+            data.kartAccent = HexToColor("#059669");
+            return data;
+        }
+
+        public static CatColorData CreateSiamese()
+        {
+            var data = CreateInstance<CatColorData>();
+            data.catName = "Siamese";
+            data.body = HexToColor("#fde68a");
+            data.bodyDark = HexToColor("#92400e");
+            data.belly = HexToColor("#fef9c3");
+            data.paw = HexToColor("#78350f");
+            data.innerEar = HexToColor("#fca5a5");
+            data.eyes = HexToColor("#2563eb");
+            data.nose = HexToColor("#d4a69a");
+            data.kartPrimary = HexToColor("#fde68a");
+            data.kartSecondary = HexToColor("#78350f");
+            data.kartAccent = HexToColor("#2563eb");
+            return data;
+        }
+
+        public static CatColorData CreateTuxedo()
+        {
+            var data = CreateInstance<CatColorData>();
+            data.catName = "Tuxedo";
+            data.body = HexToColor("#1f2937");
+            data.bodyDark = HexToColor("#111827");
+            data.belly = HexToColor("#f3f4f6");
+            data.paw = HexToColor("#ffffff");
+            data.innerEar = HexToColor("#fca5a5");
+            data.eyes = HexToColor("#10b981");
+            data.nose = HexToColor("#6b7280");
+            data.kartPrimary = HexToColor("#1f2937");
+            data.kartSecondary = HexToColor("#f3f4f6");
+            data.kartAccent = HexToColor("#10b981");
+            return data;
+        }
+
+        public static CatColorData CreateTiger()
+        {
+            var data = CreateInstance<CatColorData>();
+            data.catName = "Tiger";
+            data.body = HexToColor("#ea580c");
+            data.bodyDark = HexToColor("#9a3412");
+            data.belly = HexToColor("#fed7aa");
+            data.paw = HexToColor("#fdba74");
+            data.innerEar = HexToColor("#fca5a5");
+            data.eyes = HexToColor("#ca8a04");
+            data.nose = HexToColor("#dc2626");
+            data.kartPrimary = HexToColor("#ea580c");
+            data.kartSecondary = HexToColor("#fbbf24");
+            data.kartAccent = HexToColor("#dc2626");
+            return data;
+        }
+
+        public static CatColorData CreateCream()
+        {
+            var data = CreateInstance<CatColorData>();
+            data.catName = "Cream";
+            data.body = HexToColor("#fcd34d");
+            data.bodyDark = HexToColor("#f59e0b");
+            data.belly = HexToColor("#fef9c3");
+            data.paw = HexToColor("#fffbeb");
+            data.innerEar = HexToColor("#fca5a5");
+            data.eyes = HexToColor("#7c3aed");
+            data.nose = HexToColor("#f9a8d4");
+            data.kartPrimary = HexToColor("#fcd34d");
+            data.kartSecondary = HexToColor("#fffbeb");
+            data.kartAccent = HexToColor("#7c3aed");
+            return data;
+        }
+
+        public static CatColorData CreateRusty()
+        {
+            var data = CreateInstance<CatColorData>();
+            data.catName = "Rusty";
+            data.body = HexToColor("#b45309");
+            data.bodyDark = HexToColor("#78350f");
+            data.belly = HexToColor("#fbbf24");
+            data.paw = HexToColor("#d97706");
+            data.innerEar = HexToColor("#fca5a5");
+            data.eyes = HexToColor("#15803d");
+            data.nose = HexToColor("#a16207");
+            data.kartPrimary = HexToColor("#b45309");
+            data.kartSecondary = HexToColor("#fbbf24");
+            data.kartAccent = HexToColor("#15803d");
+            return data;
+        }
+
+        public static CatColorData CreateBlueberry()
+        {
+            var data = CreateInstance<CatColorData>();
+            data.catName = "Blueberry";
+            data.body = HexToColor("#6366f1");
+            data.bodyDark = HexToColor("#4338ca");
+            data.belly = HexToColor("#c7d2fe");
+            data.paw = HexToColor("#e0e7ff");
+            data.innerEar = HexToColor("#fca5a5");
+            data.eyes = HexToColor("#f59e0b");
+            data.nose = HexToColor("#a78bfa");
+            data.kartPrimary = HexToColor("#6366f1");
+            data.kartSecondary = HexToColor("#c7d2fe");
+            data.kartAccent = HexToColor("#f59e0b");
+            return data;
+        }
+
+        /// <summary>Returns all AI cat color presets in order.</summary>
+        public static CatColorData[] GetAllAIColors()
+        {
+            return new[]
+            {
+                CreateShadow(), CreateMidnight(), CreateSnow(),
+                CreateCalico(), CreateSiamese(), CreateTuxedo(),
+                CreateTiger(), CreateCream(), CreateRusty(), CreateBlueberry()
+            };
+        }
+
         private static Color HexToColor(string hex)
         {
             ColorUtility.TryParseHtmlString(hex, out Color color);

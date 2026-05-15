@@ -28,7 +28,16 @@ namespace CatnipCart.Track
             public int position; // 1st, 2nd, etc.
             public bool hasStarted; // True once they've hit checkpoint 1+
 
-            public float TotalProgress => (currentLap * 1000f) + currentCheckpoint + (distanceAlongTrack / 1000f);
+            // Position scoring: lap is dominant, then checkpoints passed, then spline distance as tiebreaker
+            // Use large multipliers so lap always outweighs checkpoints, and checkpoints outweigh distance
+            public float TotalProgress
+            {
+                get
+                {
+                    if (finished) return 100000f + (10000f - finishTime); // Finished racers always rank highest, earlier finish = higher
+                    return (currentLap * 10000f) + (currentCheckpoint * 100f) + (distanceAlongTrack * 0.01f);
+                }
+            }
         }
 
         public List<RacerProgress> racers = new List<RacerProgress>();

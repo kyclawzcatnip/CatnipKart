@@ -29,6 +29,8 @@ namespace CatnipCart.Kart
         private Vector3 groundNormal = Vector3.up;
         private bool wasGrounded;
         private float airborneTimer; // Track how long we've been in the air
+        private float offRoadTimer; // Track how long we've been off the road
+        private Track.TrackSpline cachedSpline;
 
         public System.Action OnDriftStart, OnDriftEnd, OnSpinOut, OnLand, OnEntangle;
         public System.Action<int> OnDriftStageChange;
@@ -66,6 +68,40 @@ namespace CatnipCart.Kart
             if (input == null || stats == null) return;
             CheckGround();
             HandleState();
+            CheckOffRoad();
+        }
+
+        void CheckOffRoad()
+        {
+            if (!IsGrounded) return;
+
+            // Cache the spline reference
+            if (cachedSpline == null)
+                cachedSpline = FindAnyObjectByType<Track.TrackSpline>();
+            if (cachedSpline == null) return;
+
+            // How far are we from the track center?
+            float nearestDist = cachedSpline.GetNearestDistance(transform.position);
+            Vector3 trackCenter = cachedSpline.GetPointAtDistance(nearestDist);
+            float distFromTrack = Vector3.Distance(
+                new Vector3(transform.position.x, 0, transform.position.z),
+                new Vector3(trackCenter.x, 0, trackCenter.z));
+
+            // Road is ~7m wide from center (roadWidth/2). Off-road if beyond that + curb
+            if (distFromTrack > 9f)
+            {
+                offRoadTimer += Time.fixedDeltaTime;
+                if (offRoadTimer >= 3f)
+                {
+                    // Meowtu rescue!
+                    offRoadTimer = 0f;
+                    RespawnOnTrack();
+                }
+            }
+            else
+            {
+                offRoadTimer = 0f;
+            }
         }
 
         void Update()
@@ -180,7 +216,16 @@ namespace CatnipCart.Kart
 
         void RespawnOnTrack()
         {
-            // Find the track spline and put us back on it
+            // Try to use Lakitu cat for a cinematic rescue
+            var lakitu = FindAnyObjectByType<Core.LakituCat>();
+            if (lakitu != null)
+            {
+                lakitu.RescueKart(this);
+                CurrentState = KartState.Normal;
+                return;
+            }
+
+            // Fallback: instant teleport back to track
             var spline = FindAnyObjectByType<Track.TrackSpline>();
             if (spline != null)
             {
@@ -286,7 +331,9 @@ namespace CatnipCart.Kart
         void UpdateSpinOut()
         {
             spinOutTimer -= Time.fixedDeltaTime;
-            transform.Rotate(0, 720 * Time.fixedDeltaTime, 0, Space.Self);
+            // Gentle wobble instead of fast spin — less nausea!
+            float wobble = Mathf.Sin(Time.time * 8f) * 120f;
+            transform.Rotate(0, wobble * Time.fixedDeltaTime, 0, Space.Self);
             rb.AddForce(-rb.linearVelocity * 3f, ForceMode.Acceleration);
             if (spinOutTimer <= 0) CurrentState = KartState.Normal;
         }

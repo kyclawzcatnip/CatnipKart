@@ -5,8 +5,9 @@ using CatnipCart.Track;
 namespace CatnipCart.AI
 {
     /// <summary>
-    /// AI input that follows the track spline with robust obstacle avoidance.
-    /// Uses OverlapSphere to find nearby obstacles and steers away from them.
+    /// AI input that follows the track spline. Implements IKartInput
+    /// so it can drive any KartController exactly like player input.
+    /// Simplified: focus on following the racing line, not obstacle avoidance.
     /// </summary>
     public class AIInput : MonoBehaviour, IKartInput
     {
@@ -15,12 +16,12 @@ namespace CatnipCart.AI
         public KartController kart;
 
         [Header("Difficulty")]
-        [Range(5f, 30f)] public float lookAheadDistance = 15f;
+        [Range(8f, 40f)] public float lookAheadDistance = 18f;
         [Range(0.5f, 1f)] public float maxSpeedMultiplier = 0.9f;
 
         [Header("Rubber Banding")]
         public bool enableRubberBanding = true;
-        public float rubberBandSpeedBoost = 0.15f;
+        public float rubberBandSpeedBoost = 0.1f;
 
         // IKartInput implementation
         public float Accelerate { get; private set; }
@@ -33,201 +34,143 @@ namespace CatnipCart.AI
         private float currentDist;
         private float steerSmooth;
         private CheckpointSystem cachedCS;
-        private Collider[] overlapResults = new Collider[20];
-        private Collider myCollider;
+        private float lastGoodDist; // Track last known good spline distance
 
         void Start()
         {
             cachedCS = FindAnyObjectByType<CheckpointSystem>();
-            myCollider = GetComponent<Collider>();
+            // Initialize our position on the spline
+            if (spline != null)
+            {
+                currentDist = spline.GetNearestDistance(transform.position);
+                lastGoodDist = currentDist;
+            }
         }
 
         void Update()
         {
             if (spline == null || kart == null) return;
 
-            // Find current position on spline
-            currentDist = spline.GetNearestDistance(transform.position);
+            // Find current position on spline using a smarter search
+            // Instead of brute-force nearest, search near our last known position
+            currentDist = GetSmartDistance();
+            lastGoodDist = currentDist;
 
-            // Look ahead target on the spline
-            float targetDist = currentDist + lookAheadDistance;
+            // Look ahead — farther when going fast, shorter when slow
+            float speedFactor = Mathf.Clamp01(kart.CurrentSpeed / 20f);
+            float dynamicLookAhead = Mathf.Lerp(lookAheadDistance * 0.5f, lookAheadDistance * 1.5f, speedFactor);
+
+            float targetDist = currentDist + dynamicLookAhead;
             Vector3 target = spline.GetPointAtDistance(targetDist);
 
-            // === SPLINE FOLLOWING ===
+            // Calculate steering toward the look-ahead point
             Vector3 toTarget = (target - transform.position);
             toTarget.y = 0;
-            if (toTarget.sqrMagnitude > 0.01f) toTarget.Normalize();
+            if (toTarget.sqrMagnitude < 0.01f) toTarget = transform.forward;
+            toTarget.Normalize();
+
             Vector3 fwd = transform.forward;
             fwd.y = 0;
             fwd.Normalize();
 
             float signedAngle = Vector3.SignedAngle(fwd, toTarget, Vector3.up);
-            float splineSteer = Mathf.Clamp(signedAngle / 40f, -1f, 1f);
+            float targetSteer = Mathf.Clamp(signedAngle / 35f, -1f, 1f);
 
-            // === OBSTACLE AVOIDANCE ===
-            float avoidSteer = GetAvoidanceSteering(out float urgency, out bool shouldBrake);
-
-            // Combine: avoidance ADDS to spline steering when urgent
-            float finalSteer;
-            if (urgency > 0.1f)
-            {
-                // Mix: urgency controls how much avoidance overrides spline following
-                finalSteer = splineSteer + avoidSteer * urgency * 2f;
-            }
-            else
-            {
-                finalSteer = splineSteer;
-            }
-            finalSteer = Mathf.Clamp(finalSteer, -1f, 1f);
-
-            // Fast response when avoiding, smooth otherwise
-            float smoothSpeed = urgency > 0.3f ? 20f : 8f;
-            steerSmooth = Mathf.Lerp(steerSmooth, finalSteer, smoothSpeed * Time.deltaTime);
+            // Smooth the steering — fast enough to actually turn but not jittery
+            steerSmooth = Mathf.Lerp(steerSmooth, targetSteer, 12f * Time.deltaTime);
             Steer = steerSmooth;
 
-            // === ACCELERATION / BRAKING ===
+            // === ACCELERATION ===
             float absAngle = Mathf.Abs(signedAngle);
 
-            if (shouldBrake)
+            if (absAngle > 70f)
             {
-                Accelerate = 0.1f;
-                Brake = 0.9f;
+                // Very sharp turn — slow down hard
+                Accelerate = 0.2f;
+                Brake = 0.6f;
             }
-            else if (urgency > 0.6f)
+            else if (absAngle > 45f)
             {
-                Accelerate = 0.3f;
-                Brake = 0.4f;
+                // Medium turn — ease off
+                Accelerate = 0.5f;
+                Brake = 0.1f;
             }
-            else if (absAngle > 60f)
+            else if (absAngle > 25f)
             {
-                Accelerate = 0.3f;
-                Brake = 0.5f;
-            }
-            else if (absAngle > 35f)
-            {
-                Accelerate = 0.6f;
+                // Gentle turn — slight reduction
+                Accelerate = 0.8f;
                 Brake = 0f;
             }
             else
             {
+                // Straight — full throttle!
                 Accelerate = 1f;
                 Brake = 0f;
             }
 
-            // Drift on sharp turns
-            Drift = absAngle > 40f && kart.CurrentSpeed > 10f && kart.IsGrounded;
+            // Drift on sharp turns when going fast
+            Drift = absAngle > 40f && kart.CurrentSpeed > 8f && kart.IsGrounded;
 
-            // Rubber banding
+            // Rubber banding — catch up if behind, slow down if way ahead
             if (enableRubberBanding && cachedCS != null)
             {
                 var progress = cachedCS.GetProgress(transform);
                 if (progress != null)
                 {
                     if (progress.position >= 3)
+                    {
+                        // Behind — push harder
                         Accelerate = Mathf.Min(1f, Accelerate + rubberBandSpeedBoost);
-                    if (progress.position == 1 && kart.CurrentSpeed > kart.stats.maxSpeed * 0.85f)
-                        Accelerate *= 0.85f;
+                        Brake = 0f;
+                    }
+                    else if (progress.position == 1 && kart.CurrentSpeed > kart.stats.maxSpeed * 0.9f)
+                    {
+                        // Way ahead — ease off slightly
+                        Accelerate *= 0.9f;
+                    }
                 }
             }
 
+            // Not using items or looking back from AI for now
             UseItem = false;
             LookBack = false;
         }
 
         /// <summary>
-        /// Uses OverlapSphere to find nearby obstacles and computes avoidance steering.
-        /// Much more reliable than raycasting for spherical/irregular obstacles.
+        /// Smarter spline distance finding. Instead of brute-force searching the whole track,
+        /// search near our last known position first. Falls back to global search if needed.
         /// </summary>
-        float GetAvoidanceSteering(out float urgency, out bool shouldBrake)
+        float GetSmartDistance()
         {
-            urgency = 0f;
-            shouldBrake = false;
+            float totalLen = spline.TotalLength;
+            if (totalLen < 1f) return 0f;
 
-            // Scan area ahead of the kart
-            Vector3 scanCenter = transform.position + transform.forward * 6f + Vector3.up * 1f;
-            float scanRadius = 10f;
+            // Search in a window around our last position
+            float searchWindow = 30f; // meters around last pos
+            float bestDist = float.MaxValue;
+            float bestT = lastGoodDist;
+            int samples = 30;
 
-            int hitCount = Physics.OverlapSphereNonAlloc(scanCenter, scanRadius, overlapResults);
-
-            float totalAvoidX = 0f;
-            float maxUrgency = 0f;
-            int obstacleCount = 0;
-
-            for (int i = 0; i < hitCount; i++)
+            for (int i = 0; i < samples; i++)
             {
-                Collider col = overlapResults[i];
-                if (col == null) continue;
-                if (col == myCollider) continue;        // Skip self
-                if (col.isTrigger) continue;            // Skip triggers (checkpoints, items)
-
-                // Identify what we hit
-                string objName = col.gameObject.name;
-
-                // Skip track surfaces
-                if (objName == "Road" || objName == "TempFloor") continue;
-                if (objName.StartsWith("Grass")) continue;
-                if (objName.StartsWith("Curb")) continue;
-
-                // Skip trees (far off track, don't need to avoid)
-                if (objName == "Trunk" || objName == "Leaves") continue;
-
-                // Everything else is an obstacle: barriers, yarn balls, other karts, hairball traps
-                Vector3 obstaclePos = col.ClosestPoint(transform.position);
-                Vector3 toObstacle = obstaclePos - transform.position;
-                float dist = toObstacle.magnitude;
-
-                // Only care about obstacles ahead of us (not behind)
-                float dotFwd = Vector3.Dot(toObstacle.normalized, transform.forward);
-                if (dotFwd < -0.2f) continue; // Behind us, ignore
-
-                // How urgent is this? (closer = more urgent)
-                float maxDist = 12f;
-                float thisUrgency = Mathf.Clamp01(1f - dist / maxDist);
-
-                // Obstacles directly ahead are more urgent
-                thisUrgency *= Mathf.Clamp01(dotFwd + 0.5f);
-
-                if (thisUrgency > maxUrgency) maxUrgency = thisUrgency;
-
-                // Which side is the obstacle on?
-                float dotRight = Vector3.Dot(toObstacle.normalized, transform.right);
-
-                // Steer AWAY from the obstacle
-                // Obstacle on right (dotRight > 0) → steer left (negative)
-                // Obstacle on left (dotRight < 0) → steer right (positive)
-                float avoidDir;
-                if (Mathf.Abs(dotRight) < 0.15f)
+                float t = lastGoodDist - searchWindow + (i / (float)samples) * searchWindow * 2f;
+                t = Mathf.Repeat(t, totalLen); // Wrap around
+                Vector3 p = spline.GetPointAtDistance(t);
+                float sqDist = (p - transform.position).sqrMagnitude;
+                if (sqDist < bestDist)
                 {
-                    // Dead ahead — pick the side with more room using the spline
-                    float splineDist = spline.GetNearestDistance(transform.position);
-                    Vector3 splineCenter = spline.GetPointAtDistance(splineDist);
-                    Vector3 toCenter = splineCenter - transform.position;
-                    float centerDot = Vector3.Dot(toCenter.normalized, transform.right);
-                    // Steer toward track center to get around the obstacle
-                    avoidDir = centerDot > 0 ? 1f : -1f;
+                    bestDist = sqDist;
+                    bestT = t;
                 }
-                else
-                {
-                    avoidDir = dotRight > 0 ? -1f : 1f;
-                }
-
-                totalAvoidX += avoidDir * thisUrgency;
-                obstacleCount++;
             }
 
-            urgency = maxUrgency;
-
-            if (obstacleCount > 0)
+            // If we're too far from the spline, do a full global search
+            if (bestDist > 400f) // > 20m away
             {
-                float avgAvoid = totalAvoidX / obstacleCount;
-
-                // Brake if obstacle is very close and dead ahead
-                shouldBrake = maxUrgency > 0.85f;
-
-                return Mathf.Clamp(avgAvoid * 1.5f, -1f, 1f);
+                bestT = spline.GetNearestDistance(transform.position);
             }
 
-            return 0f;
+            return bestT;
         }
     }
 }

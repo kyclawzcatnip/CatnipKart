@@ -219,6 +219,9 @@ namespace CatnipCart.UI
             return text;
         }
 
+        private bool playerFinished;
+        private int finalPosition;
+
         void Update()
         {
             if (playerKart == null || checkpointSystem == null) return;
@@ -226,22 +229,25 @@ namespace CatnipCart.UI
             var progress = checkpointSystem.GetProgress(playerKart.transform);
             if (progress == null) return;
 
-            // === POSITION ===
-            string[] suffixes = { "st", "nd", "rd", "th" };
-            int pos = progress.position;
-            string suffix = pos <= 3 ? suffixes[pos - 1] : suffixes[3];
-            positionText.text = $"{pos}{suffix}";
-            positionText.color = pos switch
+            // === POSITION (freeze when finished) ===
+            if (!playerFinished)
             {
-                1 => new Color(1f, 0.85f, 0f),    // Gold
-                2 => new Color(0.75f, 0.75f, 0.8f), // Silver
-                3 => new Color(0.8f, 0.5f, 0.2f),   // Bronze
-                _ => Color.white
-            };
+                string[] suffixes = { "st", "nd", "rd", "th" };
+                int pos = progress.position;
+                string suffix = pos <= 3 ? suffixes[pos - 1] : suffixes[3];
+                positionText.text = $"{pos}{suffix}";
+                positionText.color = pos switch
+                {
+                    1 => new Color(1f, 0.85f, 0f),    // Gold
+                    2 => new Color(0.75f, 0.75f, 0.8f), // Silver
+                    3 => new Color(0.8f, 0.5f, 0.2f),   // Bronze
+                    _ => Color.white
+                };
 
-            // === LAP ===
-            int lap = Mathf.Max(1, progress.currentLap + 1);
-            lapText.text = $"Lap {Mathf.Min(lap, raceManager.totalLaps)}/{raceManager.totalLaps}";
+                // === LAP ===
+                int lap = Mathf.Max(1, progress.currentLap + 1);
+                lapText.text = $"Lap {Mathf.Min(lap, raceManager.totalLaps)}/{raceManager.totalLaps}";
+            }
 
             // === SPEED ===
             float kmh = Mathf.Abs(playerKart.CurrentSpeed) * 3.6f;
@@ -373,20 +379,34 @@ namespace CatnipCart.UI
         void ShowResults()
         {
             if (resultsPanel == null) return;
-            resultsPanel.SetActive(true);
 
             var progress = checkpointSystem.GetProgress(playerKart.transform);
             if (progress == null) return;
 
-            string place = progress.position switch
+            // Lock in the finishing position!
+            playerFinished = true;
+            finalPosition = progress.position;
+
+            // Freeze the position text to final place
+            string[] suffixes = { "st", "nd", "rd", "th" };
+            string suffix = finalPosition <= 3 ? suffixes[finalPosition - 1] : suffixes[3];
+            positionText.text = $"{finalPosition}{suffix}";
+            positionText.fontSize = 90; // Make it bigger to celebrate!
+            lapText.text = "FINISH!";
+            lapText.color = new Color(1f, 0.85f, 0f);
+
+            // Show results panel
+            resultsPanel.SetActive(true);
+
+            string place = finalPosition switch
             {
                 1 => "🏆 1st Place! 🏆",
                 2 => "🥈 2nd Place!",
                 3 => "🥉 3rd Place!",
-                _ => $"{progress.position}th Place"
+                _ => $"{finalPosition}th Place"
             };
 
-            string celebrate = progress.position <= 3 ? "\n\nGreat job! 🐱" : "\n\nBetter luck next time!";
+            string celebrate = finalPosition <= 3 ? "\n\nGreat job! 🐱" : "\n\nBetter luck next time!";
             resultsText.text = $"FINISH!\n\n{place}{celebrate}\n\nPress R to restart";
         }
     }

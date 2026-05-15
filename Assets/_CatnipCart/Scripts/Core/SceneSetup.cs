@@ -16,6 +16,7 @@ namespace CatnipCart.Core
     {
         [Header("Race Config")]
         public int totalLaps = 3;
+        [Range(1, 10)] public int aiRacers = 5;
 
         void Awake()
         {
@@ -47,13 +48,14 @@ namespace CatnipCart.Core
             var playerKart = CreateKart("PlayerKart", CatColorData.CreateGinger(), true,
                 spline, GetStartPosition(spline, 0));
 
-            // === AI KARTS ===
-            var aiKart1 = CreateKart("AI_Shadow", CatColorData.CreateShadow(), false,
-                spline, GetStartPosition(spline, 1));
-            var aiKart2 = CreateKart("AI_Midnight", CatColorData.CreateMidnight(), false,
-                spline, GetStartPosition(spline, 2));
-            var aiKart3 = CreateKart("AI_Snow", CatColorData.CreateSnow(), false,
-                spline, GetStartPosition(spline, 3));
+            // === AI KARTS (9 unique cats!) ===
+            var aiColors = CatColorData.GetAllAIColors();
+            int aiCount = Mathf.Clamp(aiRacers, 1, aiColors.Length);
+            for (int i = 0; i < aiCount; i++)
+            {
+                var aiKart = CreateKart($"AI_{aiColors[i].catName}", aiColors[i], false,
+                    spline, GetStartPosition(spline, i + 1));
+            }
 
             // === CAMERA ===
             var camGO = new GameObject("RaceCamera");
@@ -93,8 +95,20 @@ namespace CatnipCart.Core
             // === BOOST PADS ===
             PlaceBoostPads(spline);
 
+            // === JUMP RAMPS ===
+            PlaceJumpRamps(spline);
+
             // === DECORATION ===
             PlaceDecorations(spline);
+
+            // === UNDERGROUND TUNNEL ===
+            BuildTunnel(spline);
+
+            // === LAKITU CAT (balloon rescue cat!) ===
+            var lakituGO = new GameObject("LakituCat");
+            lakituGO.transform.position = playerKart.transform.position + Vector3.up * 12f;
+            var lakitu = lakituGO.AddComponent<LakituCat>();
+            lakitu.target = playerKart.transform;
 
             // === RESTART HANDLER ===
             gameObject.AddComponent<RestartHandler>();
@@ -123,11 +137,17 @@ namespace CatnipCart.Core
 
             // Kart stats
             var stats = ScriptableObject.CreateInstance<KartStats>();
-            if (!isPlayer)
+            if (isPlayer)
             {
-                // Slight variation for AI
-                stats.maxSpeed += Random.Range(-2f, 2f);
-                stats.acceleration += Random.Range(-5f, 5f);
+                // Player gets a slight edge to offset human input imperfection
+                stats.maxSpeed += 3f;    // 28 vs AI's 22-25
+                stats.acceleration += 5f; // 45 vs AI's 33-40
+            }
+            else
+            {
+                // AI is slightly slower — they have perfect inputs so need a handicap
+                stats.maxSpeed += Random.Range(-3f, 0f);     // 22-25
+                stats.acceleration += Random.Range(-7f, 0f); // 33-40
             }
 
             // Kart controller
@@ -193,31 +213,53 @@ namespace CatnipCart.Core
 
         System.Collections.Generic.List<Vector3> CreateCatnipGardensLayout()
         {
-            // Fun circuit — all flat (Y=0) so terrain matches
+            // Expanded "Catnip Gardens Grand Prix" circuit — big and exciting!
             return new System.Collections.Generic.List<Vector3>
             {
+                // === START / FINISH STRAIGHT ===
                 new Vector3(0, 0, 0),
-                new Vector3(40, 0, 10),
-                new Vector3(80, 0, 5),
-                new Vector3(110, 0, 30),    // Gentle right
-                new Vector3(120, 0, 70),
-                new Vector3(100, 0, 110),   // Hairpin left
-                new Vector3(60, 0, 120),
-                new Vector3(30, 0, 130),    // Was uphill — now flat
-                new Vector3(-10, 0, 120),
-                new Vector3(-40, 0, 100),   // Was downhill — now flat
-                new Vector3(-60, 0, 70),
-                new Vector3(-70, 0, 40),    // Tight right
-                new Vector3(-50, 0, 10),
-                new Vector3(-20, 0, -10),   // S-curve back to start
+                new Vector3(60, 0, 5),
+                new Vector3(120, 0, 0),         // Long opening straight
+
+                // === SWEEPING RIGHT INTO THE VALLEY ===
+                new Vector3(170, 0, 20),
+                new Vector3(200, 0, 60),
+                new Vector3(210, 0, 110),        // Right curve
+
+                // === HAIRPIN LEFT ===
+                new Vector3(190, 0, 160),
+                new Vector3(150, 0, 190),        // Tight hairpin
+
+                // === BACKSTRETCH WITH S-CURVES ===
+                new Vector3(100, 0, 200),
+                new Vector3(60, 0, 180),         // S-curve part 1
+                new Vector3(30, 0, 210),         // S-curve part 2
+                new Vector3(-10, 0, 190),        // S-curve part 3
+
+                // === TUNNEL SECTION (track stays flat, tunnel built over it) ===
+                new Vector3(-50, 0, 160),
+                new Vector3(-80, 0, 120),
+
+                // === WIDE LEFT SWEEPER (inside tunnel!) ===
+                new Vector3(-120, 0, 90),
+                new Vector3(-140, 0, 50),
+
+                // === TUNNEL EXIT / CHICANE ===
+                new Vector3(-120, 0, 20),
+                new Vector3(-100, 0, -10),       // Quick left-right
+                new Vector3(-70, 0, -20),
+
+                // === FINAL CURVE BACK TO START ===
+                new Vector3(-30, 0, -30),
+                new Vector3(-10, 0, -15),        // Final bend
             };
         }
 
         void PlaceItemBoxes(TrackSpline spline)
         {
-            // Place item box rows at 4 locations around the track
+            // Place item box rows at 6 locations around the bigger track
             float totalLen = spline.TotalLength;
-            float[] placements = { 0.15f, 0.4f, 0.65f, 0.85f };
+            float[] placements = { 0.1f, 0.25f, 0.4f, 0.55f, 0.72f, 0.88f };
 
             foreach (float t in placements)
             {
@@ -243,7 +285,7 @@ namespace CatnipCart.Core
         void PlaceBoostPads(TrackSpline spline)
         {
             float totalLen = spline.TotalLength;
-            float[] placements = { 0.25f, 0.55f, 0.75f };
+            float[] placements = { 0.12f, 0.32f, 0.5f, 0.68f, 0.88f };
 
             foreach (float t in placements)
             {
@@ -256,6 +298,25 @@ namespace CatnipCart.Core
                 padGO.transform.rotation = Quaternion.LookRotation(fwd);
                 padGO.AddComponent<BoxCollider>().size = new Vector3(4f, 1f, 6f);
                 padGO.AddComponent<BoostPad>();
+            }
+        }
+
+        void PlaceJumpRamps(TrackSpline spline)
+        {
+            float totalLen = spline.TotalLength;
+            // Place 3 jump ramps at exciting spots on the track
+            float[] placements = { 0.2f, 0.5f, 0.8f };
+
+            foreach (float t in placements)
+            {
+                float dist = t * totalLen;
+                Vector3 center = spline.GetPointAtDistance(dist);
+                Vector3 fwd = spline.GetDirectionAtDistance(dist);
+
+                var rampGO = new GameObject($"JumpRamp_{t}");
+                rampGO.transform.position = center + Vector3.up * 0.05f;
+                rampGO.transform.rotation = Quaternion.LookRotation(fwd);
+                rampGO.AddComponent<JumpRamp>();
             }
         }
 
@@ -291,7 +352,7 @@ namespace CatnipCart.Core
                 CreateTree(treePos, treeMat, trunkMat);
             }
 
-            // Giant yarn balls as obstacles — sit ON the track surface
+            // Yarn ball decorations — placed OFF track as scenery
             for (int i = 0; i < 5; i++)
             {
                 float dist = (i / 5f + 0.1f) * totalLen;
@@ -299,16 +360,18 @@ namespace CatnipCart.Core
                 Vector3 fwd = spline.GetDirectionAtDistance(dist);
                 Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
 
-                float yarnOffset = Random.Range(-5f, 5f);
-                Vector3 pos = center + right * yarnOffset;
-                pos.y = center.y + 1.5f; // Sit on track surface (center.y + radius)
+                // Place well off to the side of the track (past the barriers)
+                float side = (i % 2 == 0) ? 1 : -1;
+                float yarnOffset = 18f + Random.Range(2f, 6f);
+                Vector3 pos = center + right * side * yarnOffset;
+                pos.y = 1f;
 
                 var yarnGO = GameObject.CreatePrimitive(PrimitiveType.Sphere);
                 yarnGO.name = $"YarnDecor_{i}";
                 yarnGO.transform.position = pos;
-                yarnGO.transform.localScale = Vector3.one * 3f;
+                yarnGO.transform.localScale = Vector3.one * 2f;
                 yarnGO.GetComponent<Renderer>().material = yarnMat;
-                // Keep collider for bouncing
+                Destroy(yarnGO.GetComponent<Collider>()); // No collision — just scenery
             }
 
             // Sun / directional light
@@ -361,6 +424,107 @@ namespace CatnipCart.Core
             var mat = new Material(Shader.Find("Universal Render Pipeline/Lit"));
             mat.color = c;
             return mat;
+        }
+
+        void BuildTunnel(TrackSpline spline)
+        {
+            var tp = new GameObject("Tunnel");
+            Material stone = MakeMat(new Color(0.35f, 0.30f, 0.28f));
+            Material dark = MakeMat(new Color(0.25f, 0.22f, 0.20f));
+            Material crystal = MakeMat(new Color(0.2f, 0.9f, 0.7f));
+            Material arch = MakeMat(new Color(0.45f, 0.38f, 0.32f));
+
+            float totalLen = spline.TotalLength;
+            float tStart = 0.58f;
+            float tEnd = 0.78f;
+            int segs = 25;
+            float w = 9f;
+            float h = 5f;
+
+            for (int i = 0; i <= segs; i++)
+            {
+                float pct = Mathf.Lerp(tStart, tEnd, i / (float)segs);
+                float d = pct * totalLen;
+                Vector3 p = spline.GetPointAtDistance(d);
+                Vector3 f = spline.GetDirectionAtDistance(d);
+                Vector3 r = Vector3.Cross(Vector3.up, f).normalized;
+                float sl = (tEnd - tStart) * totalLen / segs + 0.5f;
+
+                var lw = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                lw.transform.SetParent(tp.transform, false);
+                lw.transform.position = p + r * w + Vector3.up * h * 0.5f;
+                lw.transform.rotation = Quaternion.LookRotation(f);
+                lw.transform.localScale = new Vector3(1f, h, sl);
+                lw.GetComponent<Renderer>().material = stone;
+                Destroy(lw.GetComponent<Collider>());
+
+                var rw = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                rw.transform.SetParent(tp.transform, false);
+                rw.transform.position = p - r * w + Vector3.up * h * 0.5f;
+                rw.transform.rotation = Quaternion.LookRotation(f);
+                rw.transform.localScale = new Vector3(1f, h, sl);
+                rw.GetComponent<Renderer>().material = stone;
+                Destroy(rw.GetComponent<Collider>());
+
+                var cl = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                cl.transform.SetParent(tp.transform, false);
+                cl.transform.position = p + Vector3.up * h;
+                cl.transform.rotation = Quaternion.LookRotation(f);
+                cl.transform.localScale = new Vector3(w * 2f + 1f, 0.8f, sl);
+                cl.GetComponent<Renderer>().material = dark;
+                Destroy(cl.GetComponent<Collider>());
+
+                if (i % 3 == 0)
+                {
+                    var cr = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                    cr.transform.SetParent(tp.transform, false);
+                    cr.transform.position = p + r * (w - 0.5f) + Vector3.up * 3f;
+                    cr.transform.localScale = new Vector3(0.3f, 0.8f, 0.3f);
+                    cr.GetComponent<Renderer>().material = crystal;
+                    Destroy(cr.GetComponent<Collider>());
+
+                    var lg = new GameObject("CL");
+                    lg.transform.SetParent(tp.transform, false);
+                    lg.transform.position = p + Vector3.up * 3f;
+                    var lt = lg.AddComponent<Light>();
+                    lt.type = LightType.Point;
+                    lt.color = new Color(0.2f, 0.9f, 0.7f);
+                    lt.range = 14f;
+                    lt.intensity = 2.5f;
+                }
+            }
+
+            foreach (float ap in new[] { tStart, tEnd })
+            {
+                float d = ap * totalLen;
+                Vector3 p = spline.GetPointAtDistance(d);
+                Vector3 f = spline.GetDirectionAtDistance(d);
+                Vector3 r = Vector3.Cross(Vector3.up, f).normalized;
+
+                var lp = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                lp.transform.SetParent(tp.transform, false);
+                lp.transform.position = p + r * (w - 0.5f) + Vector3.up * h * 0.5f;
+                lp.transform.rotation = Quaternion.LookRotation(f);
+                lp.transform.localScale = new Vector3(2f, h, 2f);
+                lp.GetComponent<Renderer>().material = arch;
+                Destroy(lp.GetComponent<Collider>());
+
+                var rp = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                rp.transform.SetParent(tp.transform, false);
+                rp.transform.position = p - r * (w - 0.5f) + Vector3.up * h * 0.5f;
+                rp.transform.rotation = Quaternion.LookRotation(f);
+                rp.transform.localScale = new Vector3(2f, h, 2f);
+                rp.GetComponent<Renderer>().material = arch;
+                Destroy(rp.GetComponent<Collider>());
+
+                var bm = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                bm.transform.SetParent(tp.transform, false);
+                bm.transform.position = p + Vector3.up * (h + 0.4f);
+                bm.transform.rotation = Quaternion.LookRotation(f);
+                bm.transform.localScale = new Vector3(w * 2f + 1f, 1.5f, 2f);
+                bm.GetComponent<Renderer>().material = arch;
+                Destroy(bm.GetComponent<Collider>());
+            }
         }
     }
 
