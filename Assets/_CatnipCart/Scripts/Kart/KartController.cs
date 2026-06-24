@@ -20,6 +20,8 @@ namespace CatnipCart.Kart
         public int DriftStage { get; private set; }
         public float DriftTime { get; private set; }
         public int DriftDirection { get; private set; }
+        public float DriftAngle { get; private set; }
+        public float DriftSlipVelocity { get; private set; }
         public bool IsBoosting => boostTimer > 0f;
         public bool IsEntangled => entangleTimer > 0f;
 
@@ -28,9 +30,10 @@ namespace CatnipCart.Kart
         private float currentSteerInput, boostTimer, boostForce, spinOutTimer, entangleTimer;
         private Vector3 groundNormal = Vector3.up;
         private bool wasGrounded;
-        private float airborneTimer; // Track how long we've been in the air
-        private float offRoadTimer; // Track how long we've been off the road
-        private Track.TrackSpline cachedSpline;
+        private float driftAngleCurrent;
+        private float driftIntensity; // 0..1 smooth ramp for auto-drift blend
+        private float driftExitAngularVelocity;
+        private float driftExitTimer;
 
         public System.Action OnDriftStart, OnDriftEnd, OnSpinOut, OnLand, OnEntangle;
         public System.Action<int> OnDriftStageChange;
@@ -44,200 +47,35 @@ namespace CatnipCart.Kart
 
         void Start()
         {
-            // Retry finding input in Start() in case it was added after our Awake()
-            if (input == null)
-                input = GetComponent<IKartInput>() as IKartInput;
-
-            if (stats == null)
-                Debug.LogError($"[KartController] No KartStats assigned on {gameObject.name}!", this);
-            if (input == null)
-                Debug.LogError($"[KartController] No IKartInput found on {gameObject.name}!", this);
-
-            rb.mass = stats != null ? stats.mass : 1000f;
+            rb.mass = stats.mass;
             rb.useGravity = false;
             rb.interpolation = RigidbodyInterpolation.Interpolate;
             rb.constraints = RigidbodyConstraints.FreezeRotation;
             rb.centerOfMass = new Vector3(0f, -0.5f, 0f);
-            rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
         }
-
-        private Items.ItemHolder itemHolder;
 
         void FixedUpdate()
         {
             if (input == null || stats == null) return;
             CheckGround();
             HandleState();
-            CheckOffRoad();
-        }
-
-        void CheckOffRoad()
-        {
-            if (!IsGrounded) return;
-
-            // Cache the spline reference
-            if (cachedSpline == null)
-                cachedSpline = FindAnyObjectByType<Track.TrackSpline>();
-            if (cachedSpline == null) return;
-
-            // How far are we from the track center?
-            float nearestDist = cachedSpline.GetNearestDistance(transform.position);
-            Vector3 trackCenter = cachedSpline.GetPointAtDistance(nearestDist);
-            float distFromTrack = Vector3.Distance(
-                new Vector3(transform.position.x, 0, transform.position.z),
-                new Vector3(trackCenter.x, 0, trackCenter.z));
-
-            // Road is ~7m wide from center (roadWidth/2). Off-road if beyond that + curb
-            if (distFromTrack > 9f)
-            {
-                offRoadTimer += Time.fixedDeltaTime;
-                if (offRoadTimer >= 3f)
-                {
-                    // Meowtu rescue!
-                    offRoadTimer = 0f;
-                    RespawnOnTrack();
-                }
-            }
-            else
-            {
-                offRoadTimer = 0f;
-            }
-        }
-
-        void Update()
-        {
-            if (input == null) return;
-
-            // Item use — must be in Update() because wasPressedThisFrame only works per-frame
-            if (input.UseItem)
-            {
-                if (itemHolder == null)
-                    itemHolder = GetComponent<Items.ItemHolder>();
-                if (itemHolder != null && itemHolder.HasItem)
-                    itemHolder.UseItem();
-            }
         }
 
         void CheckGround()
         {
-            Vector3 origin = groundRayOrigin ? groundRayOrigin.position : transform.position + Vector3.up * 0.5f;
+            Vector3 origin = groundRayOrigin ? groundRayOrigin.position : transform.position;
             wasGrounded = IsGrounded;
-
-            // Generous ground check distance — increases when airborne to help re-acquire ground
-            float checkDist = stats.groundCheckDistance * 2f;
-            if (!wasGrounded) checkDist *= 1.5f; // Even more generous when trying to re-land
-
-            bool foundGround = false;
-            RaycastHit bestHit = default;
-            float bestDist = float.MaxValue;
-
-            // Center ray + 4 corner rays + 4 wider rays
-            Vector3[] offsets = new Vector3[]
-            {
-                Vector3.zero,
-                transform.forward * 0.5f,
-                -transform.forward * 0.5f,
-                transform.right * 0.4f,
-                -transform.right * 0.4f,
-                transform.forward * 0.5f + transform.right * 0.4f,
-                transform.forward * 0.5f - transform.right * 0.4f,
-                -transform.forward * 0.5f + transform.right * 0.4f,
-                -transform.forward * 0.5f - transform.right * 0.4f,
-            };
-
-            foreach (var offset in offsets)
-            {
-                // Cast straight down — use default layer detection (skips "Ignore Raycast" layer)
-                if (Physics.Raycast(origin + offset, Vector3.down, out RaycastHit hit, checkDist))
-                {
-                    // Skip trigger colliders (checkpoints etc.)
-                    if (hit.collider.isTrigger) continue;
-
-                    // Skip small objects (yarn balls, item boxes) — only ground on large surfaces
-                    // Track meshes use MeshCollider, floor uses MeshCollider on Plane
-                    if (hit.collider is SphereCollider) continue; // yarn balls
-                    if (hit.collider is BoxCollider bc && bc.size.x < 3f) continue; // small boxes
-
-                    if (hit.distance < bestDist)
-                    {
-                        bestDist = hit.distance;
-                        bestHit = hit;
-                        foundGround = true;
-                    }
-                }
-            }
-
-            if (foundGround)
+            if (Physics.Raycast(origin, -transform.up, out RaycastHit hit, stats.groundCheckDistance, groundLayer))
             {
                 IsGrounded = true;
-                groundNormal = bestHit.normal;
-                airborneTimer = 0f;
-
-                // Smoothly settle onto the ground
-                float targetY = bestHit.point.y + 0.5f;
+                groundNormal = hit.normal;
                 Vector3 pos = transform.position;
-                float diff = targetY - pos.y;
-
-                if (diff > 0) // Below ground — push up
-                {
-                    pos.y = Mathf.Lerp(pos.y, targetY, Time.fixedDeltaTime * 15f);
-                    transform.position = pos;
-                }
-                else if (diff > -0.3f) // Slightly above — settle
-                {
-                    pos.y = Mathf.Lerp(pos.y, targetY, Time.fixedDeltaTime * 10f);
-                    transform.position = pos;
-                }
-
-                // Kill downward velocity when grounded
-                if (rb.linearVelocity.y < -1f)
-                {
-                    var v = rb.linearVelocity;
-                    v.y *= 0.5f;
-                    rb.linearVelocity = v;
-                }
-
+                pos.y = Mathf.Lerp(pos.y, hit.point.y + stats.groundCheckDistance * 0.5f, Time.fixedDeltaTime * 15f);
+                transform.position = pos;
+                if (rb.linearVelocity.y < 0) { var v = rb.linearVelocity; v.y = 0; rb.linearVelocity = v; }
                 if (!wasGrounded) OnLand?.Invoke();
             }
-            else
-            {
-                IsGrounded = false;
-                groundNormal = Vector3.up;
-                airborneTimer += Time.fixedDeltaTime;
-
-                // Safety: if airborne too long, teleport back to track
-                if (airborneTimer > 4f)
-                {
-                    RespawnOnTrack();
-                    airborneTimer = 0f;
-                }
-            }
-        }
-
-        void RespawnOnTrack()
-        {
-            // Try to use Lakitu cat for a cinematic rescue
-            var lakitu = FindAnyObjectByType<Core.LakituCat>();
-            if (lakitu != null)
-            {
-                lakitu.RescueKart(this);
-                CurrentState = KartState.Normal;
-                return;
-            }
-
-            // Fallback: instant teleport back to track
-            var spline = FindAnyObjectByType<Track.TrackSpline>();
-            if (spline != null)
-            {
-                float dist = spline.GetNearestDistance(transform.position);
-                Vector3 trackPos = spline.GetPointAtDistance(dist);
-                Vector3 trackFwd = spline.GetDirectionAtDistance(dist);
-                transform.position = trackPos + Vector3.up * 1.5f;
-                transform.rotation = Quaternion.LookRotation(trackFwd);
-                rb.linearVelocity = Vector3.zero;
-                rb.angularVelocity = Vector3.zero;
-                CurrentState = KartState.Normal;
-            }
+            else { IsGrounded = false; groundNormal = Vector3.up; }
         }
 
         void HandleState()
@@ -246,9 +84,8 @@ namespace CatnipCart.Kart
             {
                 case KartState.Normal:
                 case KartState.Boosting:
+                case KartState.Drifting: // Auto-drift is a smooth blend inside UpdateDriving
                     UpdateDriving(); break;
-                case KartState.Drifting:
-                    UpdateDrifting(); break;
                 case KartState.SpinOut:
                     UpdateSpinOut(); break;
                 case KartState.Falling:
@@ -264,76 +101,141 @@ namespace CatnipCart.Kart
         void UpdateDriving()
         {
             currentSteerInput = Mathf.MoveTowards(currentSteerInput, input.Steer, stats.steerInputSmoothing * Time.fixedDeltaTime);
-            if (input.Drift && IsGrounded && Mathf.Abs(currentSteerInput) > 0.3f && CurrentSpeed > 5f) { StartDrift(); return; }
+
+            // --- Auto-drift: smoothly ramp drift intensity based on speed + steer ---
+            float absSteer = Mathf.Abs(currentSteerInput);
+            float speedRatio = Mathf.Clamp01(CurrentSpeed / stats.maxSpeed);
+            bool wantDrift = IsGrounded && absSteer > 0.5f && speedRatio > 0.4f;
+            // Also allow manual drift button as an override
+            if (input.Drift && IsGrounded && absSteer > 0.2f && CurrentSpeed > stats.minDriftSpeed)
+                wantDrift = true;
+
+            float targetIntensity = wantDrift ? Mathf.Clamp01(absSteer * speedRatio * 1.4f) : 0f;
+            float rampSpeed = wantDrift ? 2.5f : 4f; // Ramp in smoothly, ramp out faster
+            driftIntensity = Mathf.Lerp(driftIntensity, targetIntensity, rampSpeed * Time.fixedDeltaTime);
+
+            // Track drift direction — lock when entering, release when intensity drops
+            bool isDrifting = driftIntensity > 0.1f;
+            if (isDrifting && DriftDirection == 0)
+            {
+                DriftDirection = currentSteerInput > 0 ? 1 : -1;
+                CurrentState = KartState.Drifting;
+                OnDriftStart?.Invoke();
+            }
+            else if (!isDrifting && DriftDirection != 0)
+            {
+                EndDrift();
+            }
+
+            // --- Mini-turbo accumulation (only when drifting above 50% intensity) ---
+            if (isDrifting && driftIntensity > 0.5f)
+            {
+                DriftTime += Time.fixedDeltaTime;
+                int ns = 0;
+                for (int i = stats.miniTurboThresholds.Length - 1; i >= 0; i--)
+                    if (DriftTime >= stats.miniTurboThresholds[i]) { ns = i + 1; break; }
+                if (ns != DriftStage) { DriftStage = ns; OnDriftStageChange?.Invoke(DriftStage); }
+            }
+
+            // --- Acceleration / braking ---
             float eMult = IsEntangled ? 0.6f : 1f;
             float maxSpd = stats.maxSpeed * eMult + (boostTimer > 0 ? boostForce : 0);
-
-            // Always allow acceleration (even in air for recovery)
+            float accelReduction = 1f - (driftIntensity * 0.3f); // Slight speed cost while sliding
             if (input.Accelerate > 0.1f && CurrentSpeed < maxSpd)
-            {
-                float accelMult = IsGrounded ? 1f : 0.5f;
-                rb.AddForce(transform.forward * stats.acceleration * input.Accelerate * accelMult, ForceMode.Acceleration);
-            }
-            else if (CurrentSpeed > 0.5f && IsGrounded)
-            {
+                rb.AddForce(transform.forward * stats.acceleration * input.Accelerate * accelReduction, ForceMode.Acceleration);
+            else if (CurrentSpeed > 0.5f)
                 rb.AddForce(-transform.forward * stats.coastDeceleration, ForceMode.Acceleration);
-            }
-
             if (input.Brake > 0.1f)
             {
                 if (CurrentSpeed > 0) rb.AddForce(-transform.forward * stats.brakeForce * input.Brake, ForceMode.Acceleration);
                 else if (CurrentSpeed > -stats.maxReverseSpeed) rb.AddForce(-transform.forward * stats.acceleration * 0.5f * input.Brake, ForceMode.Acceleration);
             }
 
-            // Allow steering both grounded AND airborne (reduced control in air)
-            if (Mathf.Abs(CurrentSpeed) > 0.3f)
+            // --- Steering: blend between normal grip turn and wider drift turn ---
+            if (IsGrounded && Mathf.Abs(CurrentSpeed) > 1f)
             {
-                float steerMultiplier = IsGrounded ? 1f : 0.4f;
-                float s = currentSteerInput * stats.turnSpeed * steerMultiplier * Time.fixedDeltaTime * (CurrentSpeed < 0 ? -1 : 1);
-                transform.Rotate(0, s, 0, Space.Self);
+                float sign = CurrentSpeed < 0 ? -1f : 1f;
+                float normalTurn = currentSteerInput * stats.turnSpeed;
+                float driftTurn = (DriftDirection != 0 ? DriftDirection : Mathf.Sign(currentSteerInput))
+                    * stats.turnSpeed * stats.driftTurnMultiplier
+                    + currentSteerInput * stats.turnSpeed * 0.4f; // Player can modulate
+                float blendedTurn = Mathf.Lerp(normalTurn, driftTurn, driftIntensity);
+                transform.Rotate(0, blendedTurn * sign * Time.fixedDeltaTime, 0, Space.Self);
             }
 
-            ApplyLateralFriction(IsGrounded ? stats.lateralGrip : stats.lateralGrip * 0.15f);
-            ClampSpeed(maxSpd);
-        }
+            // --- Lateral physics: blend between full grip and drift slide ---
+            if (isDrifting)
+            {
+                // Drift angle ramps up smoothly with intensity
+                float targetAngle = stats.maxDriftAngle * DriftDirection * driftIntensity;
+                // Counter-steer modulation
+                if ((DriftDirection > 0 && input.Steer < -0.1f) || (DriftDirection < 0 && input.Steer > 0.1f))
+                    targetAngle += input.Steer * stats.driftCounterSteerSensitivity * stats.maxDriftAngle;
+                driftAngleCurrent = Mathf.Lerp(driftAngleCurrent, targetAngle, stats.driftAngleBuildSpeed * Time.fixedDeltaTime);
+                DriftAngle = driftAngleCurrent;
 
-        void StartDrift()
-        {
-            CurrentState = KartState.Drifting;
-            DriftDirection = currentSteerInput > 0 ? 1 : -1;
-            DriftTime = 0; DriftStage = 0;
-            OnDriftStart?.Invoke();
-        }
+                // Lateral slide proportional to drift intensity (smooth, not snappy)
+                float normalizedAngle = Mathf.Abs(driftAngleCurrent) / stats.maxDriftAngle;
+                float slipSpeed = CurrentSpeed * stats.driftRearSlipFactor * normalizedAngle * driftIntensity;
+                Vector3 desiredLateral = transform.right * DriftDirection * slipSpeed;
+                Vector3 currentLateral = Vector3.Dot(rb.linearVelocity, transform.right) * transform.right;
+                Vector3 lateralCorrection = (desiredLateral - currentLateral) * stats.lateralGrip;
+                rb.AddForce(lateralCorrection, ForceMode.Acceleration);
+                DriftSlipVelocity = Vector3.Dot(rb.linearVelocity, transform.right);
 
-        void UpdateDrifting()
-        {
-            if (!input.Drift || !IsGrounded) { EndDrift(); return; }
-            DriftTime += Time.fixedDeltaTime;
-            int ns = 0;
-            for (int i = stats.miniTurboThresholds.Length - 1; i >= 0; i--) if (DriftTime >= stats.miniTurboThresholds[i]) { ns = i + 1; break; }
-            if (ns != DriftStage) { DriftStage = ns; OnDriftStageChange?.Invoke(DriftStage); }
-            float eMult = IsEntangled ? 0.6f : 1f;
-            float maxSpd = stats.maxSpeed * eMult + (boostTimer > 0 ? boostForce : 0);
-            if (input.Accelerate > 0.1f && CurrentSpeed < maxSpd) rb.AddForce(transform.forward * stats.acceleration * input.Accelerate * 0.8f, ForceMode.Acceleration);
-            float totalSteer = (DriftDirection * stats.turnSpeed * stats.driftTurnMultiplier + input.Steer * stats.turnSpeed * 0.5f) * Time.fixedDeltaTime;
-            transform.Rotate(0, totalSteer, 0, Space.Self);
-            ApplyLateralFriction(stats.lateralGrip * stats.driftStiffness);
+                // Tire scrub deceleration scaled by intensity
+                rb.AddForce(-transform.forward * stats.driftDeceleration * normalizedAngle * driftIntensity, ForceMode.Acceleration);
+
+                // Blend lateral grip: less grip = more slide
+                float gripBlend = Mathf.Lerp(stats.lateralGrip, stats.lateralGrip * 0.15f, driftIntensity);
+                ApplyLateralFriction(gripBlend);
+            }
+            else
+            {
+                // Full grip — normal driving
+                driftAngleCurrent = Mathf.Lerp(driftAngleCurrent, 0f, 6f * Time.fixedDeltaTime);
+                DriftAngle = driftAngleCurrent;
+                ApplyLateralFriction(stats.lateralGrip);
+            }
+
             ClampSpeed(maxSpd);
+
+            // Drift exit inertia — carry residual angular momentum after ending a drift
+            if (driftExitTimer > 0f)
+            {
+                driftExitTimer -= Time.fixedDeltaTime;
+                float inertiaDecay = driftExitTimer / 0.4f;
+                transform.Rotate(0, driftExitAngularVelocity * inertiaDecay * Time.fixedDeltaTime, 0, Space.Self);
+            }
         }
 
         void EndDrift()
         {
-            if (DriftStage > 0 && DriftStage <= stats.miniTurboForces.Length) ApplyBoost(stats.miniTurboForces[DriftStage - 1], stats.miniTurboDurations[DriftStage - 1]);
-            CurrentState = KartState.Normal; DriftStage = 0; DriftTime = 0; DriftDirection = 0;
+            // Save boost params before resetting state
+            int savedStage = DriftStage;
+
+            // Angular inertia: carry residual rotation after drift ends
+            // Scaled by how intense the drift was for smooth exits
+            float angularVelocity = driftAngleCurrent * stats.driftAngularInertia * 1.5f;
+            driftExitAngularVelocity = angularVelocity;
+            driftExitTimer = 0.35f;
+
+            // Reset state BEFORE calling ApplyBoost to prevent infinite recursion
+            CurrentState = KartState.Normal;
+            DriftStage = 0; DriftTime = 0; DriftDirection = 0;
+            DriftSlipVelocity = 0;
+            // Don't snap driftAngleCurrent to 0 — let it decay smoothly in UpdateDriving
             OnDriftEnd?.Invoke();
+
+            // Apply mini-turbo boost based on saved drift stage
+            if (savedStage > 0 && savedStage <= stats.miniTurboForces.Length)
+                ApplyBoost(stats.miniTurboForces[savedStage - 1], stats.miniTurboDurations[savedStage - 1]);
         }
 
         void UpdateSpinOut()
         {
             spinOutTimer -= Time.fixedDeltaTime;
-            // Gentle wobble instead of fast spin — less nausea!
-            float wobble = Mathf.Sin(Time.time * 8f) * 120f;
-            transform.Rotate(0, wobble * Time.fixedDeltaTime, 0, Space.Self);
+            transform.Rotate(0, 720 * Time.fixedDeltaTime, 0, Space.Self);
             rb.AddForce(-rb.linearVelocity * 3f, ForceMode.Acceleration);
             if (spinOutTimer <= 0) CurrentState = KartState.Normal;
         }
@@ -358,8 +260,18 @@ namespace CatnipCart.Kart
         public void ApplyBoost(float force, float duration)
         {
             boostForce = force; boostTimer = duration;
-            if (CurrentState == KartState.Drifting) EndDrift();
-            if (CurrentState == KartState.Normal) CurrentState = KartState.Boosting;
+
+            // If drifting, reset drift state directly (do NOT call EndDrift —
+            // EndDrift calls ApplyBoost for mini-turbo, causing infinite recursion).
+            // The external boost replaces the mini-turbo anyway.
+            if (CurrentState == KartState.Drifting)
+            {
+                DriftStage = 0; DriftTime = 0; DriftDirection = 0;
+                DriftSlipVelocity = 0; driftIntensity = 0f;
+                OnDriftEnd?.Invoke();
+            }
+
+            CurrentState = KartState.Boosting;
             rb.AddForce(transform.forward * force * 2f, ForceMode.VelocityChange);
             OnBoostStart?.Invoke(duration);
         }
