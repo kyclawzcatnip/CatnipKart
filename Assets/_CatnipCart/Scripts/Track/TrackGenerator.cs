@@ -1,11 +1,13 @@
 using UnityEngine;
 using System.Collections.Generic;
+using CatnipCart.Core;
 
 namespace CatnipCart.Track
 {
     /// <summary>
     /// Generates the track mesh along the TrackSpline.
     /// Creates road surface, curbs, grass borders, and barrier colliders.
+    /// Supports per-track color theming via the trackXxxColor fields.
     /// </summary>
     [RequireComponent(typeof(TrackSpline))]
     public class TrackGenerator : MonoBehaviour
@@ -24,6 +26,12 @@ namespace CatnipCart.Track
 
         [Header("Barriers")]
         public float barrierHeight = 2f;
+
+        [Header("Track Theme Colors (set by SceneSetup)")]
+        public Color trackRoadColor = Color.clear;
+        public Color trackCurbColor = Color.clear;
+        public Color trackGrassColor = Color.clear;
+        public Color trackBarrierColor = Color.clear;
 
         private TrackSpline spline;
 
@@ -67,7 +75,11 @@ namespace CatnipCart.Track
                 float t = (i / (float)resolution) * totalLen;
                 Vector3 center = spline.GetPointAtDistance(t);
                 Vector3 fwd = spline.GetDirectionAtDistance(t);
-                Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
+                // Robust right-vector: fall back when track is nearly vertical
+                Vector3 up = Vector3.up;
+                if (Mathf.Abs(Vector3.Dot(fwd, up)) > 0.95f)
+                    up = Vector3.forward;
+                Vector3 right = Vector3.Cross(up, fwd).normalized;
 
                 Vector3 leftEdge = center + right * (offset + width);
                 Vector3 rightEdge = center + right * offset;
@@ -111,9 +123,13 @@ namespace CatnipCart.Track
                 float t = (i / (float)resolution) * totalLen;
                 Vector3 center = spline.GetPointAtDistance(t);
                 Vector3 fwd = spline.GetDirectionAtDistance(t);
-                Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
+                // Robust right-vector: fall back when track is nearly vertical
+                Vector3 up = Vector3.up;
+                if (Mathf.Abs(Vector3.Dot(fwd, up)) > 0.95f)
+                    up = Vector3.forward;
+                Vector3 right = Vector3.Cross(up, fwd).normalized;
 
-                float barrierOffset = roadWidth / 2f + curbWidth + 2.5f; // 2m extra gap from track edge
+                float barrierOffset = roadWidth / 2f + curbWidth + 0.5f;
 
                 // Left barrier
                 CreateBarrierSegment($"BarrierL_{i}", center + right * barrierOffset, fwd, spacing);
@@ -126,75 +142,65 @@ namespace CatnipCart.Track
         {
             var go = new GameObject(name);
             go.transform.SetParent(transform, false);
-            go.transform.position = pos;
+            go.transform.position = pos + Vector3.up * barrierHeight * 0.5f;
             go.transform.rotation = Quaternion.LookRotation(fwd);
 
-            // Short visible guardrail (0.6m tall — like a real racetrack fence)
-            float railHeight = 0.6f;
-
-            // Post
-            var post = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            post.name = "Post";
-            post.transform.SetParent(go.transform, false);
-            post.transform.localPosition = new Vector3(0, railHeight * 0.5f, 0);
-            post.transform.localScale = new Vector3(0.15f, railHeight, 0.15f);
-            post.GetComponent<Renderer>().material = GetBarrierMat();
-            Destroy(post.GetComponent<Collider>());
-
-            // Horizontal rail
-            var rail = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            rail.name = "Rail";
-            rail.transform.SetParent(go.transform, false);
-            rail.transform.localPosition = new Vector3(0, railHeight * 0.7f, 0);
-            rail.transform.localScale = new Vector3(0.1f, 0.12f, length);
-            rail.GetComponent<Renderer>().material = GetCurbMat(); // Red stripe
-            Destroy(rail.GetComponent<Collider>());
-
-            // Small visible collider at rail height
             var box = go.AddComponent<BoxCollider>();
-            box.center = new Vector3(0, railHeight * 0.5f, 0);
-            box.size = new Vector3(0.3f, railHeight, length);
+            box.size = new Vector3(0.5f, barrierHeight, length);
 
-            // Invisible tall wall — keeps karts from flying over
-            var invisWall = new GameObject("InvisWall");
-            invisWall.transform.SetParent(go.transform, false);
-            invisWall.transform.localPosition = new Vector3(0, 5f, 0);
-            var wallCol = invisWall.AddComponent<BoxCollider>();
-            wallCol.size = new Vector3(0.5f, 10f, length);
+            // Visual
+            var visual = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            visual.name = "Visual";
+            visual.transform.SetParent(go.transform, false);
+            visual.transform.localScale = new Vector3(0.5f, barrierHeight, length);
+            visual.GetComponent<Renderer>().material = GetBarrierMat();
+            Destroy(visual.GetComponent<Collider>());
         }
+
+        // ---------------------------------------------------------------
+        //  MATERIAL GETTERS — tinted by track theme colors when set
+        // ---------------------------------------------------------------
 
         Material GetRoadMat()
         {
             if (roadMaterial) return roadMaterial;
-            var m = new Material(Shader.Find("Universal Render Pipeline/Lit"));
-            m.color = new Color(0.3f, 0.3f, 0.35f);
-            m.SetFloat("_Smoothness", 0.2f);
-            return m;
+            var mat = ProceduralTextureLib.MakeLitMaterial(
+                ProceduralTextureLib.Asphalt(), 0.2f, 0f, null,
+                new Vector2(1f, 10f));
+            if (trackRoadColor != Color.clear)
+                mat.color = trackRoadColor;
+            return mat;
         }
 
         Material GetCurbMat()
         {
             if (curbMaterial) return curbMaterial;
-            var m = new Material(Shader.Find("Universal Render Pipeline/Lit"));
-            m.color = new Color(0.9f, 0.2f, 0.2f);
-            return m;
+            var mat = ProceduralTextureLib.MakeLitMaterial(
+                ProceduralTextureLib.RacingStripes(), 0.3f);
+            if (trackCurbColor != Color.clear)
+                mat.color = trackCurbColor;
+            return mat;
         }
 
         Material GetGrassMat()
         {
             if (grassMaterial) return grassMaterial;
-            var m = new Material(Shader.Find("Universal Render Pipeline/Lit"));
-            m.color = new Color(0.2f, 0.65f, 0.15f);
-            m.SetFloat("_Smoothness", 0.1f);
-            return m;
+            var mat = ProceduralTextureLib.MakeLitMaterial(
+                ProceduralTextureLib.Grass(), 0.1f, 0f, null,
+                new Vector2(1f, 10f));
+            if (trackGrassColor != Color.clear)
+                mat.color = trackGrassColor;
+            return mat;
         }
 
         Material GetBarrierMat()
         {
             if (barrierMaterial) return barrierMaterial;
-            var m = new Material(Shader.Find("Universal Render Pipeline/Lit"));
-            m.color = new Color(0.85f, 0.85f, 0.9f);
-            return m;
+            var mat = ProceduralTextureLib.MakeLitMaterial(
+                ProceduralTextureLib.Barrier(), 0.4f, 0.2f);
+            if (trackBarrierColor != Color.clear)
+                mat.color = trackBarrierColor;
+            return mat;
         }
     }
 }

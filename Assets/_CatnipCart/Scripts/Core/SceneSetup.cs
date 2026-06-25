@@ -11,33 +11,213 @@ namespace CatnipCart.Core
     /// Master scene initializer. Creates the entire race scene procedurally:
     /// track, karts, cats, camera, UI, lighting, skybox.
     /// Attach to an empty GameObject in the scene and press Play.
+    /// 
+    /// Now data-driven: uses TrackData to configure all visual/layout parameters.
+    /// Shows a track selection menu if no track is selected yet.
     /// </summary>
     public class SceneSetup : MonoBehaviour
     {
         [Header("Race Config")]
         public int totalLaps = 3;
-        [Range(1, 10)] public int aiRacers = 5;
+
+        /// <summary>
+        /// Track index backed by PlayerPrefs so it survives scene reloads in WebGL.
+        /// </summary>
+        public static int SelectedTrackIndex
+        {
+            get { return PlayerPrefs.GetInt("SelectedTrack", 0); }
+            set { PlayerPrefs.SetInt("SelectedTrack", value); PlayerPrefs.Save(); }
+        }
+
+        private string _currentTrackName = "";
+        private int _totalTracks = 8;
+        private float _trackBannerTimer = 0f;
 
         void Awake()
         {
-            BuildScene();
+            var allTracks = TrackData.GetAllTracks();
+            _totalTracks = allTracks.Length;
+            int idx = Mathf.Clamp(SelectedTrackIndex, 0, _totalTracks - 1);
+            _currentTrackName = allTracks[idx].trackName;
+            _trackBannerTimer = 4f;
+            BuildScene(allTracks[idx]);
         }
 
-        void BuildScene()
+        private bool _menuOpen = false;
+        private TrackData[] _allTracks;
+
+        void Update()
+        {
+            // Tab or Escape toggles the track select menu
+            if (Input.GetKeyDown(KeyCode.Tab) || Input.GetKeyDown(KeyCode.Escape))
+            {
+                _menuOpen = !_menuOpen;
+                Time.timeScale = _menuOpen ? 0f : 1f;
+            }
+
+            // R to restart (only when menu is closed)
+            if (!_menuOpen && Input.GetKeyDown(KeyCode.R))
+            {
+                Time.timeScale = 1f;
+                UnityEngine.SceneManagement.SceneManager.LoadScene(0);
+            }
+        }
+
+        void OnGUI()
+        {
+            // --- Always show small hint at bottom ---
+            GUIStyle hintStyle = new GUIStyle(GUI.skin.label);
+            hintStyle.fontSize = 14;
+            hintStyle.normal.textColor = new Color(1, 1, 1, 0.6f);
+            GUI.Label(new Rect(10, Screen.height - 25, 400, 20),
+                "TAB = Track Select | R = Restart", hintStyle);
+
+            // --- Track name banner on load ---
+            if (_trackBannerTimer > 0f)
+            {
+                _trackBannerTimer -= Time.unscaledDeltaTime;
+                float alpha = Mathf.Clamp01(_trackBannerTimer);
+                GUI.color = new Color(0, 0, 0, 0.7f * alpha);
+                GUI.DrawTexture(new Rect(0, 10, Screen.width, 50), Texture2D.whiteTexture);
+                GUIStyle bannerStyle = new GUIStyle(GUI.skin.label);
+                bannerStyle.fontSize = 28;
+                bannerStyle.fontStyle = FontStyle.Bold;
+                bannerStyle.alignment = TextAnchor.MiddleCenter;
+                bannerStyle.normal.textColor = new Color(1, 1, 1, alpha);
+                GUI.color = new Color(1, 1, 1, alpha);
+                GUI.Label(new Rect(0, 12, Screen.width, 46), _currentTrackName, bannerStyle);
+                GUI.color = Color.white;
+            }
+
+            // --- Full-screen track select menu ---
+            if (!_menuOpen) return;
+
+            if (_allTracks == null)
+                _allTracks = TrackData.GetAllTracks();
+
+            // Darken background
+            GUI.color = new Color(0, 0, 0, 0.85f);
+            GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
+            GUI.color = Color.white;
+
+            // Title
+            GUIStyle titleStyle = new GUIStyle(GUI.skin.label);
+            titleStyle.fontSize = 40;
+            titleStyle.fontStyle = FontStyle.Bold;
+            titleStyle.alignment = TextAnchor.MiddleCenter;
+            titleStyle.normal.textColor = Color.white;
+            GUI.Label(new Rect(0, 30, Screen.width, 60), "SELECT TRACK", titleStyle);
+
+            // Subtitle
+            GUIStyle subStyle = new GUIStyle(GUI.skin.label);
+            subStyle.fontSize = 16;
+            subStyle.alignment = TextAnchor.MiddleCenter;
+            subStyle.normal.textColor = new Color(1, 1, 1, 0.5f);
+            GUI.Label(new Rect(0, 80, Screen.width, 30), "Click a track to race! Press TAB to close.", subStyle);
+
+            // Track buttons grid (2 columns)
+            int columns = 2;
+            float btnW = 320;
+            float btnH = 55;
+            float gap = 15;
+            float gridW = columns * btnW + (columns - 1) * gap;
+            float startX = (Screen.width - gridW) / 2f;
+            float startY = 130;
+
+            for (int i = 0; i < _allTracks.Length; i++)
+            {
+                int col = i % columns;
+                int row = i / columns;
+                float x = startX + col * (btnW + gap);
+                float y = startY + row * (btnH + gap);
+
+                bool isCurrent = (i == SelectedTrackIndex);
+
+                // Button style
+                GUIStyle trackBtn = new GUIStyle(GUI.skin.button);
+                trackBtn.fontSize = 20;
+                trackBtn.fontStyle = isCurrent ? FontStyle.Bold : FontStyle.Normal;
+                trackBtn.alignment = TextAnchor.MiddleCenter;
+
+                // Highlight current track
+                if (isCurrent)
+                {
+                    GUI.color = new Color(0.3f, 1f, 0.4f, 1f);
+                }
+                else
+                {
+                    GUI.color = Color.white;
+                }
+
+                string label = $"{_allTracks[i].trackEmoji}  {_allTracks[i].trackName}";
+                if (isCurrent) label += "  (current)";
+
+                if (GUI.Button(new Rect(x, y, btnW, btnH), label, trackBtn))
+                {
+                    SelectedTrackIndex = i;
+                    _menuOpen = false;
+                    Time.timeScale = 1f;
+                    UnityEngine.SceneManagement.SceneManager.LoadScene(0);
+                }
+            }
+
+            GUI.color = Color.white;
+
+            // Close button at bottom
+            GUIStyle closeStyle = new GUIStyle(GUI.skin.button);
+            closeStyle.fontSize = 18;
+            float closeY = startY + ((_allTracks.Length + 1) / columns) * (btnH + gap) + 10;
+            if (GUI.Button(new Rect(Screen.width / 2f - 100, closeY, 200, 45), "Close (TAB)", closeStyle))
+            {
+                _menuOpen = false;
+                Time.timeScale = 1f;
+            }
+        }
+
+        void ShowTrackSelect()
+        {
+            // Remove default camera for our UI camera
+            var defaultCam = Camera.main;
+
+            // Create a UI camera
+            var camGO = new GameObject("MenuCamera");
+            var cam = camGO.AddComponent<Camera>();
+            cam.clearFlags = CameraClearFlags.SolidColor;
+            cam.backgroundColor = new Color(0.08f, 0.06f, 0.12f);
+            cam.orthographic = true;
+
+            if (defaultCam != null && defaultCam != cam)
+                Destroy(defaultCam.gameObject);
+
+            // Add the track selection UI
+            var menuGO = new GameObject("TrackSelectUI");
+            menuGO.AddComponent<TrackSelectUI>();
+        }
+
+        void BuildScene(TrackData trackData)
         {
             // === LIGHTING ===
-            SetupLighting();
+            SetupLighting(trackData);
+
+            // === FOG ===
+            SetupFog(trackData);
 
             // === TRACK ===
             var trackGO = new GameObject("Track");
             var spline = trackGO.AddComponent<TrackSpline>();
-            spline.waypoints = CreateCatnipGardensLayout();
+            spline.waypoints = trackData.waypoints;
             spline.isClosed = true;
-            spline.CalculateLengths();
+            spline.CalculateLengths(); // Must recalculate after setting waypoints
 
             var trackGen = trackGO.AddComponent<TrackGenerator>();
-            trackGen.roadWidth = 14f;
-            trackGen.resolution = 200;
+            trackGen.roadWidth = trackData.roadWidth;
+            trackGen.resolution = trackData.resolution;
+
+            // Apply track-specific colors to the generator
+            trackGen.trackRoadColor = trackData.roadColor;
+            trackGen.trackCurbColor = trackData.curbColor;
+            trackGen.trackGrassColor = trackData.grassColor;
+            trackGen.trackBarrierColor = trackData.barrierColor;
 
             var checkpoints = trackGO.AddComponent<CheckpointSystem>();
             checkpoints.spline = spline;
@@ -48,20 +228,19 @@ namespace CatnipCart.Core
             var playerKart = CreateKart("PlayerKart", CatColorData.CreateGinger(), true,
                 spline, GetStartPosition(spline, 0));
 
-            // === AI KARTS (9 unique cats!) ===
-            var aiColors = CatColorData.GetAllAIColors();
-            int aiCount = Mathf.Clamp(aiRacers, 1, aiColors.Length);
-            for (int i = 0; i < aiCount; i++)
-            {
-                var aiKart = CreateKart($"AI_{aiColors[i].catName}", aiColors[i], false,
-                    spline, GetStartPosition(spline, i + 1));
-            }
+            // === AI KARTS ===
+            var aiKart1 = CreateKart("AI_Shadow", CatColorData.CreateShadow(), false,
+                spline, GetStartPosition(spline, 1));
+            var aiKart2 = CreateKart("AI_Midnight", CatColorData.CreateMidnight(), false,
+                spline, GetStartPosition(spline, 2));
+            var aiKart3 = CreateKart("AI_Snow", CatColorData.CreateSnow(), false,
+                spline, GetStartPosition(spline, 3));
 
             // === CAMERA ===
             var camGO = new GameObject("RaceCamera");
             var cam = camGO.AddComponent<Camera>();
-            cam.clearFlags = CameraClearFlags.SolidColor;
-            cam.backgroundColor = new Color(0.5f, 0.75f, 1f);
+            cam.clearFlags = CameraClearFlags.Skybox;
+            cam.backgroundColor = trackData.cameraBgColor;
             cam.fieldOfView = 60f;
             cam.nearClipPlane = 0.3f;
             cam.farClipPlane = 500f;
@@ -95,20 +274,8 @@ namespace CatnipCart.Core
             // === BOOST PADS ===
             PlaceBoostPads(spline);
 
-            // === JUMP RAMPS ===
-            PlaceJumpRamps(spline);
-
             // === DECORATION ===
-            PlaceDecorations(spline);
-
-            // === UNDERGROUND TUNNEL ===
-            BuildTunnel(spline);
-
-            // === LAKITU CAT (balloon rescue cat!) ===
-            var lakituGO = new GameObject("LakituCat");
-            lakituGO.transform.position = playerKart.transform.position + Vector3.up * 12f;
-            var lakitu = lakituGO.AddComponent<LakituCat>();
-            lakitu.target = playerKart.transform;
+            PlaceDecorations(spline, trackData);
 
             // === RESTART HANDLER ===
             gameObject.AddComponent<RestartHandler>();
@@ -137,17 +304,11 @@ namespace CatnipCart.Core
 
             // Kart stats
             var stats = ScriptableObject.CreateInstance<KartStats>();
-            if (isPlayer)
+            if (!isPlayer)
             {
-                // Player gets a slight edge to offset human input imperfection
-                stats.maxSpeed += 3f;    // 28 vs AI's 22-25
-                stats.acceleration += 5f; // 45 vs AI's 33-40
-            }
-            else
-            {
-                // AI is slightly slower — they have perfect inputs so need a handicap
-                stats.maxSpeed += Random.Range(-3f, 0f);     // 22-25
-                stats.acceleration += Random.Range(-7f, 0f); // 33-40
+                // Slight variation for AI
+                stats.maxSpeed += Random.Range(-2f, 2f);
+                stats.acceleration += Random.Range(-5f, 5f);
             }
 
             // Kart controller
@@ -211,55 +372,11 @@ namespace CatnipCart.Core
             return pos;
         }
 
-        System.Collections.Generic.List<Vector3> CreateCatnipGardensLayout()
-        {
-            // Expanded "Catnip Gardens Grand Prix" circuit — big and exciting!
-            return new System.Collections.Generic.List<Vector3>
-            {
-                // === START / FINISH STRAIGHT ===
-                new Vector3(0, 0, 0),
-                new Vector3(60, 0, 5),
-                new Vector3(120, 0, 0),         // Long opening straight
-
-                // === SWEEPING RIGHT INTO THE VALLEY ===
-                new Vector3(170, 0, 20),
-                new Vector3(200, 0, 60),
-                new Vector3(210, 0, 110),        // Right curve
-
-                // === HAIRPIN LEFT ===
-                new Vector3(190, 0, 160),
-                new Vector3(150, 0, 190),        // Tight hairpin
-
-                // === BACKSTRETCH WITH S-CURVES ===
-                new Vector3(100, 0, 200),
-                new Vector3(60, 0, 180),         // S-curve part 1
-                new Vector3(30, 0, 210),         // S-curve part 2
-                new Vector3(-10, 0, 190),        // S-curve part 3
-
-                // === TUNNEL SECTION (track stays flat, tunnel built over it) ===
-                new Vector3(-50, 0, 160),
-                new Vector3(-80, 0, 120),
-
-                // === WIDE LEFT SWEEPER (inside tunnel!) ===
-                new Vector3(-120, 0, 90),
-                new Vector3(-140, 0, 50),
-
-                // === TUNNEL EXIT / CHICANE ===
-                new Vector3(-120, 0, 20),
-                new Vector3(-100, 0, -10),       // Quick left-right
-                new Vector3(-70, 0, -20),
-
-                // === FINAL CURVE BACK TO START ===
-                new Vector3(-30, 0, -30),
-                new Vector3(-10, 0, -15),        // Final bend
-            };
-        }
-
         void PlaceItemBoxes(TrackSpline spline)
         {
-            // Place item box rows at 6 locations around the bigger track
+            // Place item box rows at 4 locations around the track
             float totalLen = spline.TotalLength;
-            float[] placements = { 0.1f, 0.25f, 0.4f, 0.55f, 0.72f, 0.88f };
+            float[] placements = { 0.15f, 0.4f, 0.65f, 0.85f };
 
             foreach (float t in placements)
             {
@@ -271,13 +388,10 @@ namespace CatnipCart.Core
                 // Row of 3 item boxes
                 for (int i = -1; i <= 1; i++)
                 {
-                    var itemGO = new GameObject($"ItemBox_{t}_{i}");
-                    itemGO.transform.position = center + right * (i * 3.5f) + Vector3.up * 1.5f;
-                    itemGO.transform.rotation = Quaternion.LookRotation(fwd);
-                    var box = itemGO.AddComponent<BoxCollider>();
-                    box.size = new Vector3(1.5f, 1.5f, 1.5f);
-                    box.isTrigger = true;
-                    itemGO.AddComponent<ItemBox>();
+                    var boxGO = new GameObject($"ItemBox_{t}_{i}");
+                    boxGO.transform.position = center + right * (i * 3.5f) + Vector3.up * 1.5f;
+                    boxGO.AddComponent<BoxCollider>().size = new Vector3(1.5f, 1.5f, 1.5f);
+                    boxGO.AddComponent<ItemBox>();
                 }
             }
         }
@@ -285,7 +399,7 @@ namespace CatnipCart.Core
         void PlaceBoostPads(TrackSpline spline)
         {
             float totalLen = spline.TotalLength;
-            float[] placements = { 0.12f, 0.32f, 0.5f, 0.68f, 0.88f };
+            float[] placements = { 0.25f, 0.55f, 0.78f };
 
             foreach (float t in placements)
             {
@@ -301,42 +415,55 @@ namespace CatnipCart.Core
             }
         }
 
-        void PlaceJumpRamps(TrackSpline spline)
+        // ---------------------------------------------------------------
+        //  THEMED DECORATIONS
+        // ---------------------------------------------------------------
+
+        void PlaceDecorations(TrackSpline spline, TrackData trackData)
         {
             float totalLen = spline.TotalLength;
-            // Place 3 jump ramps at exciting spots on the track
-            float[] placements = { 0.2f, 0.5f, 0.8f };
 
-            foreach (float t in placements)
-            {
-                float dist = t * totalLen;
-                Vector3 center = spline.GetPointAtDistance(dist);
-                Vector3 fwd = spline.GetDirectionAtDistance(dist);
+            // Sun / directional light — themed per track
+            var sun = new GameObject("Sun");
+            var light = sun.AddComponent<Light>();
+            light.type = LightType.Directional;
+            light.intensity = trackData.sunIntensity;
+            light.color = trackData.sunColor;
+            sun.transform.rotation = Quaternion.Euler(trackData.sunRotation);
 
-                var rampGO = new GameObject($"JumpRamp_{t}");
-                rampGO.transform.position = center + Vector3.up * 0.05f;
-                rampGO.transform.rotation = Quaternion.LookRotation(fwd);
-                rampGO.AddComponent<JumpRamp>();
-            }
+            // Spawn theme-specific decorations
+            string trackName = trackData.trackName;
+
+            if (trackName == "Catnip Gardens")
+                PlaceGardensDecor(spline, totalLen);
+            else if (trackName == "Catnip City")
+                PlaceCityDecor(spline, totalLen);
+            else if (trackName == "Meowz'es Mansion")
+                PlaceMansionDecor(spline, totalLen);
+            else if (trackName == "Catnip Sky Lands")
+                PlaceSkyLandsDecor(spline, totalLen);
+            else if (trackName == "Whisker Beach")
+                PlaceBeachDecor(spline, totalLen);
+            else if (trackName == "Purrfrost Peaks")
+                PlacePeaksDecor(spline, totalLen);
+            else if (trackName == "Tabby Toybox")
+                PlaceToyboxDecor(spline, totalLen);
+            else if (trackName == "Neko Nethervoid")
+                PlaceNethervoidDecor(spline, totalLen);
+            else
+                PlaceGardensDecor(spline, totalLen); // Fallback
         }
 
-        void PlaceDecorations(TrackSpline spline)
+        // --- CATNIP GARDENS: Trees + yarn balls (original) ---
+        void PlaceGardensDecor(TrackSpline spline, float totalLen)
         {
-            float totalLen = spline.TotalLength;
-            Material treeMat = MakeMat(new Color(0.15f, 0.5f, 0.1f));
-            Material trunkMat = MakeMat(new Color(0.45f, 0.3f, 0.15f));
-            Material yarnMat = MakeMat(new Color(0.9f, 0.2f, 0.3f));
+            Material treeMat = ProceduralTextureLib.MakeLitMaterial(
+                ProceduralTextureLib.TreeLeaves(), 0.15f);
+            Material trunkMat = ProceduralTextureLib.MakeLitMaterial(
+                ProceduralTextureLib.TreeBark(), 0.2f);
+            Material yarnMat = ProceduralTextureLib.MakeLitMaterial(
+                ProceduralTextureLib.Yarn(new Color(0.9f, 0.2f, 0.3f)), 0.3f);
 
-            // === GROUND PLANE — large green floor under everything ===
-            var groundGO = GameObject.CreatePrimitive(PrimitiveType.Plane);
-            groundGO.name = "TempFloor";
-            groundGO.transform.position = new Vector3(25, -0.05f, 60); // Center of the track area
-            groundGO.transform.localScale = new Vector3(40, 1, 40); // 400x400 unit plane
-            var groundMat = MakeMat(new Color(0.18f, 0.55f, 0.12f));
-            groundMat.SetFloat("_Smoothness", 0.05f);
-            groundGO.GetComponent<Renderer>().material = groundMat;
-
-            // Trees along the track
             for (int i = 0; i < 30; i++)
             {
                 float dist = (i / 30f) * totalLen;
@@ -347,12 +474,9 @@ namespace CatnipCart.Core
                 float side = (i % 2 == 0) ? 1 : -1;
                 float offset = 12f + Random.Range(3f, 10f);
                 Vector3 treePos = center + right * side * offset;
-                treePos.y = 0;
-
                 CreateTree(treePos, treeMat, trunkMat);
             }
 
-            // Yarn ball decorations — placed OFF track as scenery
             for (int i = 0; i < 5; i++)
             {
                 float dist = (i / 5f + 0.1f) * totalLen;
@@ -360,28 +484,648 @@ namespace CatnipCart.Core
                 Vector3 fwd = spline.GetDirectionAtDistance(dist);
                 Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
 
-                // Place well off to the side of the track (past the barriers)
-                float side = (i % 2 == 0) ? 1 : -1;
-                float yarnOffset = 18f + Random.Range(2f, 6f);
-                Vector3 pos = center + right * side * yarnOffset;
-                pos.y = 1f;
+                float yarnSide = (Random.value > 0.5f) ? 1f : -1f;
+                float yarnOffset = yarnSide * Random.Range(10f, 16f);
+                Vector3 pos = center + right * yarnOffset;
+                pos.y += 1.0f;
 
                 var yarnGO = GameObject.CreatePrimitive(PrimitiveType.Sphere);
                 yarnGO.name = $"YarnDecor_{i}";
                 yarnGO.transform.position = pos;
-                yarnGO.transform.localScale = Vector3.one * 2f;
+                yarnGO.transform.localScale = Vector3.one * 1.5f;
                 yarnGO.GetComponent<Renderer>().material = yarnMat;
-                Destroy(yarnGO.GetComponent<Collider>()); // No collision — just scenery
+            }
+        }
+
+        // --- CATNIP CITY: Street lamps + neon signs ---
+        void PlaceCityDecor(TrackSpline spline, float totalLen)
+        {
+            Material metalMat = MakeMat(new Color(0.3f, 0.3f, 0.35f));
+            Material neonPink = ProceduralTextureLib.MakeLitMaterial(
+                ProceduralTextureLib.KartPaint(new Color(0.9f, 0.1f, 0.5f)), 0.6f, 0.3f,
+                new Color(0.9f, 0.1f, 0.5f) * 2f);
+            Material neonBlue = ProceduralTextureLib.MakeLitMaterial(
+                ProceduralTextureLib.KartPaint(new Color(0.1f, 0.4f, 0.9f)), 0.6f, 0.3f,
+                new Color(0.1f, 0.4f, 0.9f) * 2f);
+
+            // Street lamps
+            for (int i = 0; i < 24; i++)
+            {
+                float dist = (i / 24f) * totalLen;
+                Vector3 center = spline.GetPointAtDistance(dist);
+                Vector3 fwd = spline.GetDirectionAtDistance(dist);
+                Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
+
+                float side = (i % 2 == 0) ? 1 : -1;
+                Vector3 lampPos = center + right * side * 10f;
+
+                CreateStreetLamp(lampPos, metalMat);
             }
 
-            // Sun / directional light
-            var sun = new GameObject("Sun");
-            var light = sun.AddComponent<Light>();
-            light.type = LightType.Directional;
-            light.intensity = 1.2f;
-            light.color = new Color(1f, 0.95f, 0.85f);
-            sun.transform.rotation = Quaternion.Euler(45, -30, 0);
+            // Neon signs scattered along the sides
+            for (int i = 0; i < 8; i++)
+            {
+                float dist = (i / 8f + 0.05f) * totalLen;
+                Vector3 center = spline.GetPointAtDistance(dist);
+                Vector3 fwd = spline.GetDirectionAtDistance(dist);
+                Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
+
+                float side = (i % 2 == 0) ? 1 : -1;
+                Vector3 signPos = center + right * side * 12f;
+                signPos.y = 4f;
+
+                var sign = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                sign.name = $"NeonSign_{i}";
+                sign.transform.position = signPos;
+                sign.transform.rotation = Quaternion.LookRotation(-right * side);
+                sign.transform.localScale = new Vector3(4f, 2f, 0.3f);
+                sign.GetComponent<Renderer>().material = (i % 2 == 0) ? neonPink : neonBlue;
+                Destroy(sign.GetComponent<Collider>());
+            }
+
+            // City buildings along the track
+            Material concreteMat = MakeMat(new Color(0.25f, 0.25f, 0.3f));
+            Material glassMat = MakeMat(new Color(0.15f, 0.2f, 0.35f));
+            glassMat.SetFloat("_Smoothness", 0.85f);
+            Material darkConcrete = MakeMat(new Color(0.18f, 0.18f, 0.22f));
+
+            for (int i = 0; i < 20; i++)
+            {
+                float dist = (i / 20f) * totalLen;
+                Vector3 center = spline.GetPointAtDistance(dist);
+                Vector3 fwd = spline.GetDirectionAtDistance(dist);
+                Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
+
+                float side = (i % 2 == 0) ? 1 : -1;
+                float offset = 16f + Random.Range(2f, 8f);
+                Vector3 pos = center + right * side * offset;
+
+                var building = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                building.name = $"Building_{i}";
+                float bHeight = Random.Range(8f, 25f);
+                float bWidth = Random.Range(4f, 8f);
+                float bDepth = Random.Range(4f, 8f);
+                building.transform.position = pos + Vector3.up * bHeight * 0.5f;
+                building.transform.localScale = new Vector3(bWidth, bHeight, bDepth);
+                building.transform.rotation = Quaternion.Euler(0, Random.Range(0, 30), 0);
+
+                // Alternate building materials
+                Material bMat;
+                switch (i % 3)
+                {
+                    case 0: bMat = concreteMat; break;
+                    case 1: bMat = glassMat; break;
+                    default: bMat = darkConcrete; break;
+                }
+                building.GetComponent<Renderer>().material = bMat;
+                Destroy(building.GetComponent<Collider>());
+
+                // Rooftop accent (water tank / antenna)
+                if (i % 3 == 0)
+                {
+                    var rooftop = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                    rooftop.transform.position = pos + Vector3.up * (bHeight + 1f);
+                    rooftop.transform.localScale = new Vector3(0.3f, 1.5f, 0.3f);
+                    rooftop.GetComponent<Renderer>().material = metalMat;
+                    Destroy(rooftop.GetComponent<Collider>());
+                }
+
+                // Lit windows (small emissive cubes on the building face)
+                for (int wn = 0; wn < 4; wn++)
+                {
+                    var win = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                    win.transform.position = pos + new Vector3(
+                        Random.Range(-bWidth * 0.3f, bWidth * 0.3f),
+                        Random.Range(2f, bHeight - 1f),
+                        side * (bDepth * 0.51f));
+                    win.transform.localScale = new Vector3(1f, 1.2f, 0.1f);
+                    Color winColor = (wn % 2 == 0)
+                        ? new Color(1f, 0.9f, 0.5f)
+                        : new Color(0.5f, 0.8f, 1f);
+                    var winMat = MakeMat(winColor);
+                    winMat.EnableKeyword("_EMISSION");
+                    winMat.SetColor("_EmissionColor", winColor * 1.5f);
+                    win.GetComponent<Renderer>().material = winMat;
+                    Destroy(win.GetComponent<Collider>());
+                }
+            }
         }
+
+        // --- MEOWZ'ES MANSION: Tombstones + dead trees ---
+        void PlaceMansionDecor(TrackSpline spline, float totalLen)
+        {
+            Material stoneMat = MakeMat(new Color(0.35f, 0.33f, 0.3f));
+            Material deadWoodMat = ProceduralTextureLib.MakeLitMaterial(
+                ProceduralTextureLib.TreeBark(), 0.1f);
+
+            // Tombstones
+            for (int i = 0; i < 20; i++)
+            {
+                float dist = (i / 20f) * totalLen;
+                Vector3 center = spline.GetPointAtDistance(dist);
+                Vector3 fwd = spline.GetDirectionAtDistance(dist);
+                Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
+
+                float side = (i % 2 == 0) ? 1 : -1;
+                float offset = 10f + Random.Range(2f, 8f);
+                Vector3 pos = center + right * side * offset;
+
+                var stone = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                stone.name = $"Tombstone_{i}";
+                stone.transform.position = pos + Vector3.up * 0.75f;
+                stone.transform.localScale = new Vector3(0.6f, 1.5f, 0.15f);
+                stone.transform.rotation = Quaternion.Euler(0, Random.Range(0, 360), Random.Range(-5f, 5f));
+                stone.GetComponent<Renderer>().material = stoneMat;
+                Destroy(stone.GetComponent<Collider>());
+            }
+
+            // Dead twisted trees (no leaves, just trunks)
+            for (int i = 0; i < 15; i++)
+            {
+                float dist = (i / 15f + 0.03f) * totalLen;
+                Vector3 center = spline.GetPointAtDistance(dist);
+                Vector3 fwd = spline.GetDirectionAtDistance(dist);
+                Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
+
+                float side = (i % 2 == 0) ? 1 : -1;
+                float offset = 14f + Random.Range(2f, 8f);
+                Vector3 pos = center + right * side * offset;
+
+                var trunk = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                trunk.name = $"DeadTree_{i}";
+                trunk.transform.position = pos;
+                float height = Random.Range(4f, 7f);
+                trunk.transform.localScale = new Vector3(0.3f, height * 0.5f, 0.3f);
+                trunk.transform.position += Vector3.up * height * 0.5f;
+                trunk.transform.rotation = Quaternion.Euler(Random.Range(-8f, 8f), 0, Random.Range(-8f, 8f));
+                trunk.GetComponent<Renderer>().material = deadWoodMat;
+                Destroy(trunk.GetComponent<Collider>());
+
+                // Bare branches
+                for (int b = 0; b < 3; b++)
+                {
+                    var branch = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                    branch.transform.SetParent(trunk.transform, false);
+                    branch.transform.localScale = new Vector3(0.3f, 0.6f, 0.3f);
+                    branch.transform.localPosition = new Vector3(
+                        Random.Range(-0.5f, 0.5f), 0.6f + b * 0.2f, Random.Range(-0.5f, 0.5f));
+                    branch.transform.localRotation = Quaternion.Euler(
+                        Random.Range(30f, 70f), Random.Range(0, 360), 0);
+                    branch.GetComponent<Renderer>().material = deadWoodMat;
+                    Destroy(branch.GetComponent<Collider>());
+                }
+            }
+
+            // --- THE MANSION ---
+            // Place a large gothic mansion building near the track start
+            Vector3 mansionCenter = spline.GetPointAtDistance(0);
+            Vector3 mansionFwd = spline.GetDirectionAtDistance(0);
+            Vector3 mansionRight = Vector3.Cross(Vector3.up, mansionFwd).normalized;
+            Vector3 mansionPos = mansionCenter + mansionRight * 25f;
+
+            Material darkStoneMat = MakeMat(new Color(0.2f, 0.18f, 0.22f));
+            Material roofMat = MakeMat(new Color(0.15f, 0.08f, 0.12f));
+            Material windowMat = MakeMat(new Color(0.6f, 0.8f, 0.3f));
+            windowMat.EnableKeyword("_EMISSION");
+            windowMat.SetColor("_EmissionColor", new Color(0.4f, 0.6f, 0.2f) * 2f);
+
+            var mansion = new GameObject("Mansion");
+            mansion.transform.position = mansionPos;
+
+            // Main building body
+            var mainBody = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            mainBody.transform.SetParent(mansion.transform, false);
+            mainBody.transform.localPosition = Vector3.up * 6f;
+            mainBody.transform.localScale = new Vector3(14f, 12f, 10f);
+            mainBody.GetComponent<Renderer>().material = darkStoneMat;
+            Destroy(mainBody.GetComponent<Collider>());
+
+            // Peaked roof (rotated cube)
+            var roof = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            roof.transform.SetParent(mansion.transform, false);
+            roof.transform.localPosition = new Vector3(0, 13.5f, 0);
+            roof.transform.localScale = new Vector3(11f, 5f, 8f);
+            roof.transform.localRotation = Quaternion.Euler(0, 0, 45);
+            roof.GetComponent<Renderer>().material = roofMat;
+            Destroy(roof.GetComponent<Collider>());
+
+            // Left tower
+            var towerL = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            towerL.transform.SetParent(mansion.transform, false);
+            towerL.transform.localPosition = new Vector3(-6f, 9f, 0);
+            towerL.transform.localScale = new Vector3(4f, 18f, 4f);
+            towerL.GetComponent<Renderer>().material = darkStoneMat;
+            Destroy(towerL.GetComponent<Collider>());
+
+            // Left tower peaked cap
+            var towerLCap = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            towerLCap.transform.SetParent(mansion.transform, false);
+            towerLCap.transform.localPosition = new Vector3(-6f, 19f, 0);
+            towerLCap.transform.localScale = new Vector3(3f, 3f, 3f);
+            towerLCap.transform.localRotation = Quaternion.Euler(0, 0, 45);
+            towerLCap.GetComponent<Renderer>().material = roofMat;
+            Destroy(towerLCap.GetComponent<Collider>());
+
+            // Right tower
+            var towerR = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            towerR.transform.SetParent(mansion.transform, false);
+            towerR.transform.localPosition = new Vector3(6f, 7.5f, 0);
+            towerR.transform.localScale = new Vector3(4f, 15f, 4f);
+            towerR.GetComponent<Renderer>().material = darkStoneMat;
+            Destroy(towerR.GetComponent<Collider>());
+
+            // Right tower cap
+            var towerRCap = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            towerRCap.transform.SetParent(mansion.transform, false);
+            towerRCap.transform.localPosition = new Vector3(6f, 16f, 0);
+            towerRCap.transform.localScale = new Vector3(3f, 3f, 3f);
+            towerRCap.transform.localRotation = Quaternion.Euler(0, 0, 45);
+            towerRCap.GetComponent<Renderer>().material = roofMat;
+            Destroy(towerRCap.GetComponent<Collider>());
+
+            // Glowing windows
+            for (int w = 0; w < 6; w++)
+            {
+                var window = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                window.transform.SetParent(mansion.transform, false);
+                float wx = -4f + (w % 3) * 4f;
+                float wy = 4f + (w / 3) * 5f;
+                window.transform.localPosition = new Vector3(wx, wy, 5.1f);
+                window.transform.localScale = new Vector3(1.5f, 2f, 0.2f);
+                window.GetComponent<Renderer>().material = windowMat;
+                Destroy(window.GetComponent<Collider>());
+            }
+
+            // Entrance door
+            var door = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            door.transform.SetParent(mansion.transform, false);
+            door.transform.localPosition = new Vector3(0, 1.5f, 5.1f);
+            door.transform.localScale = new Vector3(2.5f, 3f, 0.3f);
+            door.GetComponent<Renderer>().material = MakeMat(new Color(0.3f, 0.15f, 0.08f));
+            Destroy(door.GetComponent<Collider>());
+        }
+
+        // --- CATNIP SKY LANDS: Clouds + rainbow arcs ---
+        void PlaceSkyLandsDecor(TrackSpline spline, float totalLen)
+        {
+            Material cloudMat = MakeMat(new Color(0.95f, 0.95f, 1f));
+            Material rainbowMat = ProceduralTextureLib.MakeLitMaterial(
+                ProceduralTextureLib.KartPaint(new Color(0.9f, 0.5f, 0.3f)), 0.4f, 0f,
+                new Color(0.9f, 0.6f, 0.3f) * 0.5f);
+
+            // Floating cloud puffs below the track
+            for (int i = 0; i < 25; i++)
+            {
+                Vector3 pos = new Vector3(
+                    Random.Range(-80f, 130f),
+                    Random.Range(-10f, -2f),
+                    Random.Range(-20f, 140f));
+
+                var cloud = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                cloud.name = $"Cloud_{i}";
+                cloud.transform.position = pos;
+                float scale = Random.Range(6f, 15f);
+                cloud.transform.localScale = new Vector3(scale * 2f, scale * 0.6f, scale);
+                cloud.GetComponent<Renderer>().material = cloudMat;
+                Destroy(cloud.GetComponent<Collider>());
+            }
+
+            // Rainbow arc decorations
+            for (int i = 0; i < 3; i++)
+            {
+                float dist = (i / 3f + 0.15f) * totalLen;
+                Vector3 center = spline.GetPointAtDistance(dist);
+
+                for (int a = 0; a < 8; a++)
+                {
+                    float angle = (a / 8f) * Mathf.PI;
+                    float radius = 20f + i * 5f;
+                    Vector3 arcPos = center + new Vector3(
+                        Mathf.Cos(angle) * radius,
+                        Mathf.Sin(angle) * radius * 0.5f + 10f,
+                        0);
+
+                    var arcSeg = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                    arcSeg.name = $"Rainbow_{i}_{a}";
+                    arcSeg.transform.position = arcPos;
+                    arcSeg.transform.localScale = Vector3.one * 1.5f;
+                    // Cycle rainbow colors
+                    float hue = a / 8f;
+                    Color rainbowCol = Color.HSVToRGB(hue, 0.7f, 0.9f);
+                    var mat = MakeMat(rainbowCol);
+                    mat.EnableKeyword("_EMISSION");
+                    mat.SetColor("_EmissionColor", rainbowCol * 0.5f);
+                    arcSeg.GetComponent<Renderer>().material = mat;
+                    Destroy(arcSeg.GetComponent<Collider>());
+                }
+            }
+        }
+
+        // --- WHISKER BEACH: Palm trees + beach umbrellas ---
+        void PlaceBeachDecor(TrackSpline spline, float totalLen)
+        {
+            Material palmTrunkMat = ProceduralTextureLib.MakeLitMaterial(
+                ProceduralTextureLib.TreeBark(), 0.15f);
+            Material palmLeafMat = ProceduralTextureLib.MakeLitMaterial(
+                ProceduralTextureLib.TreeLeaves(), 0.1f);
+
+            // Palm trees
+            for (int i = 0; i < 20; i++)
+            {
+                float dist = (i / 20f) * totalLen;
+                Vector3 center = spline.GetPointAtDistance(dist);
+                Vector3 fwd = spline.GetDirectionAtDistance(dist);
+                Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
+
+                float side = (i % 2 == 0) ? 1 : -1;
+                float offset = 12f + Random.Range(3f, 10f);
+                Vector3 pos = center + right * side * offset;
+
+                CreatePalmTree(pos, palmTrunkMat, palmLeafMat);
+            }
+
+            // Beach umbrellas
+            for (int i = 0; i < 8; i++)
+            {
+                float dist = (i / 8f + 0.06f) * totalLen;
+                Vector3 center = spline.GetPointAtDistance(dist);
+                Vector3 fwd = spline.GetDirectionAtDistance(dist);
+                Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
+
+                float side = (i % 2 == 0) ? 1 : -1;
+                Vector3 pos = center + right * side * 14f;
+
+                CreateBeachUmbrella(pos, i);
+            }
+        }
+
+        // --- PURRFROST PEAKS: Snow-covered pines + ice crystals ---
+        void PlacePeaksDecor(TrackSpline spline, float totalLen)
+        {
+            Material snowPineMat = MakeMat(new Color(0.15f, 0.28f, 0.15f));
+            Material snowMat = MakeMat(new Color(0.9f, 0.92f, 0.98f));
+            Material trunkMat = ProceduralTextureLib.MakeLitMaterial(
+                ProceduralTextureLib.TreeBark(), 0.15f);
+            Material iceMat = MakeMat(new Color(0.7f, 0.85f, 0.95f));
+            iceMat.SetFloat("_Smoothness", 0.9f);
+
+            // Snow-covered pine trees
+            for (int i = 0; i < 25; i++)
+            {
+                float dist = (i / 25f) * totalLen;
+                Vector3 center = spline.GetPointAtDistance(dist);
+                Vector3 fwd = spline.GetDirectionAtDistance(dist);
+                Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
+
+                float side = (i % 2 == 0) ? 1 : -1;
+                float offset = 11f + Random.Range(2f, 10f);
+                Vector3 pos = center + right * side * offset;
+
+                CreateSnowPine(pos, snowPineMat, snowMat, trunkMat);
+            }
+
+            // Ice crystal formations
+            for (int i = 0; i < 6; i++)
+            {
+                float dist = (i / 6f + 0.08f) * totalLen;
+                Vector3 center = spline.GetPointAtDistance(dist);
+                Vector3 fwd = spline.GetDirectionAtDistance(dist);
+                Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
+
+                float side = (i % 2 == 0) ? 1 : -1;
+                Vector3 pos = center + right * side * 9f;
+
+                CreateIceCrystal(pos, iceMat);
+            }
+        }
+
+        // --- TABBY TOYBOX: Toy blocks + bouncy balls ---
+        void PlaceToyboxDecor(TrackSpline spline, float totalLen)
+        {
+            Color[] toyColors = {
+                new Color(0.95f, 0.2f, 0.2f),  // Red
+                new Color(0.2f, 0.6f, 0.95f),  // Blue
+                new Color(0.95f, 0.85f, 0.1f), // Yellow
+                new Color(0.2f, 0.85f, 0.3f),  // Green
+                new Color(0.9f, 0.4f, 0.9f),   // Pink
+                new Color(0.95f, 0.5f, 0.1f),  // Orange
+            };
+
+            // Scattered toy blocks
+            for (int i = 0; i < 20; i++)
+            {
+                float dist = (i / 20f) * totalLen;
+                Vector3 center = spline.GetPointAtDistance(dist);
+                Vector3 fwd = spline.GetDirectionAtDistance(dist);
+                Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
+
+                float side = (i % 2 == 0) ? 1 : -1;
+                float offset = 11f + Random.Range(2f, 8f);
+                Vector3 pos = center + right * side * offset;
+
+                var block = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                block.name = $"ToyBlock_{i}";
+                float blockSize = Random.Range(2f, 5f);
+                block.transform.position = pos + Vector3.up * blockSize * 0.5f;
+                block.transform.localScale = Vector3.one * blockSize;
+                block.transform.rotation = Quaternion.Euler(0, Random.Range(0, 90), 0);
+
+                Color blockColor = toyColors[i % toyColors.Length];
+                var mat = MakeMat(blockColor);
+                mat.SetFloat("_Smoothness", 0.7f);
+                block.GetComponent<Renderer>().material = mat;
+                Destroy(block.GetComponent<Collider>());
+            }
+
+            // Bouncy balls
+            for (int i = 0; i < 10; i++)
+            {
+                float dist = (i / 10f + 0.05f) * totalLen;
+                Vector3 center = spline.GetPointAtDistance(dist);
+                Vector3 fwd = spline.GetDirectionAtDistance(dist);
+                Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
+
+                float side = (i % 2 == 0) ? 1 : -1;
+                Vector3 pos = center + right * side * Random.Range(10f, 16f);
+                float ballSize = Random.Range(1.5f, 4f);
+                pos.y = ballSize * 0.5f;
+
+                var ball = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                ball.name = $"BouncyBall_{i}";
+                ball.transform.position = pos;
+                ball.transform.localScale = Vector3.one * ballSize;
+
+                Color ballColor = toyColors[(i + 3) % toyColors.Length];
+                var mat = MakeMat(ballColor);
+                mat.SetFloat("_Smoothness", 0.85f);
+                ball.GetComponent<Renderer>().material = mat;
+                Destroy(ball.GetComponent<Collider>());
+            }
+        }
+
+        // --- NEKO NETHERVOID: Floating asteroids + star particles ---
+        void PlaceNethervoidDecor(TrackSpline spline, float totalLen)
+        {
+            Material asteroidMat = MakeMat(new Color(0.12f, 0.08f, 0.18f));
+            Material asteroidDarkMat = MakeMat(new Color(0.06f, 0.04f, 0.1f));
+
+            // --- Large floating asteroid formations ---
+            for (int i = 0; i < 40; i++)
+            {
+                float dist = (i / 40f) * totalLen;
+                Vector3 center = spline.GetPointAtDistance(dist);
+                Vector3 fwd = spline.GetDirectionAtDistance(dist);
+                Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
+
+                float side = (i % 2 == 0) ? 1 : -1;
+                float offset = 14f + Random.Range(5f, 25f);
+                Vector3 pos = center + right * side * offset;
+                pos.y += Random.Range(-8f, 15f);
+
+                var asteroid = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                asteroid.name = $"Asteroid_{i}";
+                asteroid.transform.position = pos;
+                float scale = Random.Range(2f, 8f);
+                asteroid.transform.localScale = new Vector3(
+                    scale * Random.Range(0.6f, 1.4f),
+                    scale * Random.Range(0.5f, 1f),
+                    scale * Random.Range(0.7f, 1.3f));
+                asteroid.transform.rotation = Random.rotation;
+                asteroid.GetComponent<Renderer>().material = (i % 3 == 0) ? asteroidDarkMat : asteroidMat;
+                Destroy(asteroid.GetComponent<Collider>());
+            }
+
+            // --- Glowing cosmic rings around the track ---
+            Color[] ringColors = {
+                new Color(0.1f, 0.9f, 0.95f),  // Cyan
+                new Color(0.8f, 0.1f, 0.9f),    // Magenta
+                new Color(0.3f, 0.1f, 1f),       // Deep purple
+            };
+
+            for (int r = 0; r < 4; r++)
+            {
+                float dist = (r / 4f + 0.1f) * totalLen;
+                Vector3 center = spline.GetPointAtDistance(dist);
+                Vector3 fwd = spline.GetDirectionAtDistance(dist);
+                float ringRadius = 18f + r * 4f;
+                Color ringColor = ringColors[r % ringColors.Length];
+
+                Material ringMat = MakeMat(ringColor);
+                ringMat.EnableKeyword("_EMISSION");
+                ringMat.SetColor("_EmissionColor", ringColor * 5f);
+
+                for (int a = 0; a < 16; a++)
+                {
+                    float angle = (a / 16f) * Mathf.PI * 2f;
+                    Vector3 ringPos = center + new Vector3(
+                        Mathf.Cos(angle) * ringRadius,
+                        Mathf.Sin(angle) * ringRadius * 0.6f + 5f,
+                        0);
+
+                    var seg = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                    seg.name = $"Ring_{r}_{a}";
+                    seg.transform.position = ringPos;
+                    seg.transform.localScale = Vector3.one * 0.8f;
+                    seg.GetComponent<Renderer>().material = ringMat;
+                    Destroy(seg.GetComponent<Collider>());
+                }
+            }
+
+            // --- Dense distant star field ---
+            for (int i = 0; i < 60; i++)
+            {
+                Vector3 pos = new Vector3(
+                    Random.Range(-100f, 240f),
+                    Random.Range(-30f, 50f),
+                    Random.Range(-50f, 230f));
+
+                var star = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                star.name = $"Star_{i}";
+                star.transform.position = pos;
+                star.transform.localScale = Vector3.one * Random.Range(0.15f, 0.6f);
+
+                Color starColor;
+                float roll = Random.value;
+                if (roll < 0.4f) starColor = new Color(0.6f, 0.7f, 1f);       // Blue-white
+                else if (roll < 0.7f) starColor = new Color(1f, 0.85f, 0.5f);  // Warm yellow
+                else starColor = new Color(0.9f, 0.3f, 0.7f);                  // Pink
+
+                var starMat = MakeMat(starColor);
+                starMat.EnableKeyword("_EMISSION");
+                starMat.SetColor("_EmissionColor", starColor * 6f);
+                star.GetComponent<Renderer>().material = starMat;
+                Destroy(star.GetComponent<Collider>());
+            }
+
+            // --- Glowing energy orbs (larger, closer to track) ---
+            for (int i = 0; i < 20; i++)
+            {
+                float dist = (i / 20f + 0.02f) * totalLen;
+                Vector3 center = spline.GetPointAtDistance(dist);
+                Vector3 pos = center + new Vector3(
+                    Random.Range(-25f, 25f),
+                    Random.Range(3f, 20f),
+                    Random.Range(-25f, 25f));
+
+                var orb = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                orb.name = $"EnergyOrb_{i}";
+                orb.transform.position = pos;
+                orb.transform.localScale = Vector3.one * Random.Range(0.5f, 2f);
+
+                Color orbColor;
+                switch (i % 3)
+                {
+                    case 0: orbColor = new Color(0.1f, 0.95f, 1f); break;
+                    case 1: orbColor = new Color(0.9f, 0.1f, 0.8f); break;
+                    default: orbColor = new Color(0.4f, 0.15f, 1f); break;
+                }
+                var orbMat = MakeMat(orbColor);
+                orbMat.EnableKeyword("_EMISSION");
+                orbMat.SetColor("_EmissionColor", orbColor * 5f);
+                orb.GetComponent<Renderer>().material = orbMat;
+                Destroy(orb.GetComponent<Collider>());
+            }
+
+            // --- Void portals (large glowing rings at key points) ---
+            for (int p = 0; p < 2; p++)
+            {
+                float dist = (p == 0 ? 0.3f : 0.7f) * totalLen;
+                Vector3 center = spline.GetPointAtDistance(dist);
+                Vector3 fwd = spline.GetDirectionAtDistance(dist);
+                Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
+
+                Vector3 portalPos = center + right * ((p == 0) ? 1 : -1) * 20f + Vector3.up * 8f;
+
+                Color portalColor = (p == 0)
+                    ? new Color(0.1f, 0.9f, 0.85f)
+                    : new Color(0.85f, 0.15f, 0.9f);
+                Material portalMat = MakeMat(portalColor);
+                portalMat.EnableKeyword("_EMISSION");
+                portalMat.SetColor("_EmissionColor", portalColor * 6f);
+
+                // Create portal ring from spheres
+                for (int a = 0; a < 20; a++)
+                {
+                    float angle = (a / 20f) * Mathf.PI * 2f;
+                    float radius = 6f;
+                    Vector3 orbPos = portalPos + new Vector3(
+                        0,
+                        Mathf.Sin(angle) * radius,
+                        Mathf.Cos(angle) * radius);
+
+                    var pOrb = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                    pOrb.name = $"Portal_{p}_{a}";
+                    pOrb.transform.position = orbPos;
+                    pOrb.transform.localScale = Vector3.one * 0.6f;
+                    pOrb.GetComponent<Renderer>().material = portalMat;
+                    Destroy(pOrb.GetComponent<Collider>());
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------
+        //  DECORATION HELPERS
+        // ---------------------------------------------------------------
 
         void CreateTree(Vector3 pos, Material leafMat, Material trunkMat)
         {
@@ -413,132 +1157,229 @@ namespace CatnipCart.Core
             }
         }
 
-        void SetupLighting()
+        void CreatePalmTree(Vector3 pos, Material trunkMat, Material leafMat)
+        {
+            var tree = new GameObject("PalmTree");
+            tree.transform.position = pos;
+
+            float height = Random.Range(6f, 10f);
+
+            // Curved trunk (slightly leaning)
+            var trunk = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            trunk.transform.SetParent(tree.transform, false);
+            trunk.transform.localPosition = new Vector3(0, height * 0.45f, 0);
+            trunk.transform.localScale = new Vector3(0.3f, height * 0.45f, 0.3f);
+            trunk.transform.localRotation = Quaternion.Euler(Random.Range(-8f, 8f), 0, Random.Range(-8f, 8f));
+            trunk.GetComponent<Renderer>().material = trunkMat;
+
+            // Palm fronds (elongated spheres fanning out from top)
+            for (int i = 0; i < 6; i++)
+            {
+                var frond = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                frond.transform.SetParent(tree.transform, false);
+                float angle = (i / 6f) * 360f;
+                float rad = angle * Mathf.Deg2Rad;
+                frond.transform.localPosition = new Vector3(
+                    Mathf.Cos(rad) * 2f,
+                    height * 0.85f + Random.Range(-0.3f, 0.3f),
+                    Mathf.Sin(rad) * 2f);
+                frond.transform.localScale = new Vector3(1f, 0.3f, 3f);
+                frond.transform.localRotation = Quaternion.Euler(
+                    Random.Range(20f, 40f), angle, 0);
+                frond.GetComponent<Renderer>().material = leafMat;
+                Destroy(frond.GetComponent<Collider>());
+            }
+        }
+
+        void CreateBeachUmbrella(Vector3 pos, int index)
+        {
+            Color[] umbrellaColors = {
+                new Color(0.95f, 0.3f, 0.2f),
+                new Color(0.2f, 0.7f, 0.95f),
+                new Color(0.95f, 0.85f, 0.2f),
+                new Color(0.3f, 0.9f, 0.4f),
+            };
+
+            var umbrella = new GameObject($"Umbrella_{index}");
+            umbrella.transform.position = pos;
+
+            // Pole
+            var pole = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            pole.transform.SetParent(umbrella.transform, false);
+            pole.transform.localPosition = Vector3.up * 1.5f;
+            pole.transform.localScale = new Vector3(0.08f, 1.5f, 0.08f);
+            pole.GetComponent<Renderer>().material = MakeMat(new Color(0.8f, 0.75f, 0.6f));
+            Destroy(pole.GetComponent<Collider>());
+
+            // Canopy
+            var canopy = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            canopy.transform.SetParent(umbrella.transform, false);
+            canopy.transform.localPosition = Vector3.up * 3f;
+            canopy.transform.localScale = new Vector3(3f, 0.4f, 3f);
+            Color uColor = umbrellaColors[index % umbrellaColors.Length];
+            canopy.GetComponent<Renderer>().material = MakeMat(uColor);
+            Destroy(canopy.GetComponent<Collider>());
+        }
+
+        void CreateSnowPine(Vector3 pos, Material pineMat, Material snowMat, Material trunkMat)
+        {
+            var tree = new GameObject("SnowPine");
+            tree.transform.position = pos;
+
+            float height = Random.Range(5f, 9f);
+
+            // Trunk
+            var trunk = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            trunk.transform.SetParent(tree.transform, false);
+            trunk.transform.localPosition = Vector3.up * height * 0.3f;
+            trunk.transform.localScale = new Vector3(0.25f, height * 0.3f, 0.25f);
+            trunk.GetComponent<Renderer>().material = trunkMat;
+
+            // Pine cone shapes (stacked, getting smaller)
+            for (int i = 0; i < 4; i++)
+            {
+                var layer = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                layer.transform.SetParent(tree.transform, false);
+                float y = height * 0.4f + i * height * 0.15f;
+                float r = (2.5f - i * 0.5f);
+                layer.transform.localPosition = new Vector3(0, y, 0);
+                layer.transform.localScale = new Vector3(r, r * 0.6f, r);
+                layer.GetComponent<Renderer>().material = pineMat;
+                Destroy(layer.GetComponent<Collider>());
+            }
+
+            // Snow cap on top
+            var snowCap = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            snowCap.transform.SetParent(tree.transform, false);
+            snowCap.transform.localPosition = new Vector3(0, height * 0.85f, 0);
+            snowCap.transform.localScale = new Vector3(1.5f, 0.5f, 1.5f);
+            snowCap.GetComponent<Renderer>().material = snowMat;
+            Destroy(snowCap.GetComponent<Collider>());
+        }
+
+        void CreateIceCrystal(Vector3 pos, Material iceMat)
+        {
+            var crystal = new GameObject("IceCrystal");
+            crystal.transform.position = pos;
+
+            // Main crystal shard (tall narrow cube)
+            var main = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            main.transform.SetParent(crystal.transform, false);
+            float mainHeight = Random.Range(3f, 6f);
+            main.transform.localPosition = Vector3.up * mainHeight * 0.5f;
+            main.transform.localScale = new Vector3(0.5f, mainHeight, 0.5f);
+            main.transform.localRotation = Quaternion.Euler(
+                Random.Range(-10f, 10f), Random.Range(0, 360), Random.Range(-10f, 10f));
+            main.GetComponent<Renderer>().material = iceMat;
+            Destroy(main.GetComponent<Collider>());
+
+            // Smaller shards around the base
+            for (int i = 0; i < 3; i++)
+            {
+                var shard = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                shard.transform.SetParent(crystal.transform, false);
+                float h = mainHeight * Random.Range(0.3f, 0.6f);
+                float angle = (i / 3f) * 360f;
+                float rad = angle * Mathf.Deg2Rad;
+                shard.transform.localPosition = new Vector3(
+                    Mathf.Cos(rad) * 0.8f,
+                    h * 0.5f,
+                    Mathf.Sin(rad) * 0.8f);
+                shard.transform.localScale = new Vector3(0.3f, h, 0.3f);
+                shard.transform.localRotation = Quaternion.Euler(
+                    Random.Range(-15f, 15f), angle, Random.Range(-15f, 15f));
+                shard.GetComponent<Renderer>().material = iceMat;
+                Destroy(shard.GetComponent<Collider>());
+            }
+        }
+
+        void CreateStreetLamp(Vector3 pos, Material metalMat)
+        {
+            var lamp = new GameObject("StreetLamp");
+            lamp.transform.position = pos;
+
+            // Pole
+            var pole = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            pole.transform.SetParent(lamp.transform, false);
+            pole.transform.localPosition = Vector3.up * 3f;
+            pole.transform.localScale = new Vector3(0.12f, 3f, 0.12f);
+            pole.GetComponent<Renderer>().material = metalMat;
+            Destroy(pole.GetComponent<Collider>());
+
+            // Light fixture
+            var fixture = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            fixture.transform.SetParent(lamp.transform, false);
+            fixture.transform.localPosition = Vector3.up * 6.2f;
+            fixture.transform.localScale = Vector3.one * 0.6f;
+
+            var lightMat = MakeMat(new Color(1f, 0.9f, 0.6f));
+            lightMat.EnableKeyword("_EMISSION");
+            lightMat.SetColor("_EmissionColor", new Color(1f, 0.9f, 0.6f) * 3f);
+            fixture.GetComponent<Renderer>().material = lightMat;
+            Destroy(fixture.GetComponent<Collider>());
+
+            // Actual point light
+            var pointLight = new GameObject("LampLight");
+            pointLight.transform.SetParent(lamp.transform, false);
+            pointLight.transform.localPosition = Vector3.up * 6f;
+            var lt = pointLight.AddComponent<Light>();
+            lt.type = LightType.Point;
+            lt.range = 15f;
+            lt.intensity = 1.5f;
+            lt.color = new Color(1f, 0.85f, 0.5f);
+        }
+
+        // ---------------------------------------------------------------
+        //  LIGHTING + FOG
+        // ---------------------------------------------------------------
+
+        void SetupLighting(TrackData trackData)
         {
             RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
-            RenderSettings.ambientLight = new Color(0.5f, 0.55f, 0.65f);
+            RenderSettings.ambientLight = trackData.ambientColor;
+
+            // Procedural skybox with track-specific colors
+            var skyTex = ProceduralTextureLib.SkyGradient(
+                trackData.skyZenith, trackData.skyHorizon, trackData.skySunGlow);
+            skyTex.wrapMode = TextureWrapMode.Clamp;
+            var skyShader = Shader.Find("Skybox/Panoramic");
+            if (skyShader == null) skyShader = Shader.Find("Skybox/6 Sided");
+            if (skyShader == null) skyShader = ProceduralTextureLib.FindLitShader();
+            var skyMat = new Material(skyShader);
+            if (skyMat != null)
+            {
+                skyMat.SetTexture("_MainTex", skyTex);
+                RenderSettings.skybox = skyMat;
+            }
+        }
+
+        void SetupFog(TrackData trackData)
+        {
+            if (trackData.fogDensity > 0f)
+            {
+                RenderSettings.fog = true;
+                RenderSettings.fogMode = FogMode.ExponentialSquared;
+                RenderSettings.fogDensity = trackData.fogDensity;
+                RenderSettings.fogColor = trackData.fogColor;
+            }
+            else
+            {
+                RenderSettings.fog = false;
+            }
         }
 
         Material MakeMat(Color c)
         {
-            var mat = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+            var mat = new Material(ProceduralTextureLib.FindLitShader());
             mat.color = c;
             return mat;
         }
-
-        void BuildTunnel(TrackSpline spline)
-        {
-            var tp = new GameObject("Tunnel");
-            Material stone = MakeMat(new Color(0.35f, 0.30f, 0.28f));
-            Material dark = MakeMat(new Color(0.25f, 0.22f, 0.20f));
-            Material crystal = MakeMat(new Color(0.2f, 0.9f, 0.7f));
-            Material arch = MakeMat(new Color(0.45f, 0.38f, 0.32f));
-
-            float totalLen = spline.TotalLength;
-            float tStart = 0.58f;
-            float tEnd = 0.78f;
-            int segs = 25;
-            float w = 9f;
-            float h = 5f;
-
-            for (int i = 0; i <= segs; i++)
-            {
-                float pct = Mathf.Lerp(tStart, tEnd, i / (float)segs);
-                float d = pct * totalLen;
-                Vector3 p = spline.GetPointAtDistance(d);
-                Vector3 f = spline.GetDirectionAtDistance(d);
-                Vector3 r = Vector3.Cross(Vector3.up, f).normalized;
-                float sl = (tEnd - tStart) * totalLen / segs + 0.5f;
-
-                var lw = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                lw.transform.SetParent(tp.transform, false);
-                lw.transform.position = p + r * w + Vector3.up * h * 0.5f;
-                lw.transform.rotation = Quaternion.LookRotation(f);
-                lw.transform.localScale = new Vector3(1f, h, sl);
-                lw.GetComponent<Renderer>().material = stone;
-                Destroy(lw.GetComponent<Collider>());
-
-                var rw = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                rw.transform.SetParent(tp.transform, false);
-                rw.transform.position = p - r * w + Vector3.up * h * 0.5f;
-                rw.transform.rotation = Quaternion.LookRotation(f);
-                rw.transform.localScale = new Vector3(1f, h, sl);
-                rw.GetComponent<Renderer>().material = stone;
-                Destroy(rw.GetComponent<Collider>());
-
-                var cl = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                cl.transform.SetParent(tp.transform, false);
-                cl.transform.position = p + Vector3.up * h;
-                cl.transform.rotation = Quaternion.LookRotation(f);
-                cl.transform.localScale = new Vector3(w * 2f + 1f, 0.8f, sl);
-                cl.GetComponent<Renderer>().material = dark;
-                Destroy(cl.GetComponent<Collider>());
-
-                if (i % 3 == 0)
-                {
-                    var cr = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                    cr.transform.SetParent(tp.transform, false);
-                    cr.transform.position = p + r * (w - 0.5f) + Vector3.up * 3f;
-                    cr.transform.localScale = new Vector3(0.3f, 0.8f, 0.3f);
-                    cr.GetComponent<Renderer>().material = crystal;
-                    Destroy(cr.GetComponent<Collider>());
-
-                    var lg = new GameObject("CL");
-                    lg.transform.SetParent(tp.transform, false);
-                    lg.transform.position = p + Vector3.up * 3f;
-                    var lt = lg.AddComponent<Light>();
-                    lt.type = LightType.Point;
-                    lt.color = new Color(0.2f, 0.9f, 0.7f);
-                    lt.range = 14f;
-                    lt.intensity = 2.5f;
-                }
-            }
-
-            foreach (float ap in new[] { tStart, tEnd })
-            {
-                float d = ap * totalLen;
-                Vector3 p = spline.GetPointAtDistance(d);
-                Vector3 f = spline.GetDirectionAtDistance(d);
-                Vector3 r = Vector3.Cross(Vector3.up, f).normalized;
-
-                var lp = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                lp.transform.SetParent(tp.transform, false);
-                lp.transform.position = p + r * (w - 0.5f) + Vector3.up * h * 0.5f;
-                lp.transform.rotation = Quaternion.LookRotation(f);
-                lp.transform.localScale = new Vector3(2f, h, 2f);
-                lp.GetComponent<Renderer>().material = arch;
-                Destroy(lp.GetComponent<Collider>());
-
-                var rp = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                rp.transform.SetParent(tp.transform, false);
-                rp.transform.position = p - r * (w - 0.5f) + Vector3.up * h * 0.5f;
-                rp.transform.rotation = Quaternion.LookRotation(f);
-                rp.transform.localScale = new Vector3(2f, h, 2f);
-                rp.GetComponent<Renderer>().material = arch;
-                Destroy(rp.GetComponent<Collider>());
-
-                var bm = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                bm.transform.SetParent(tp.transform, false);
-                bm.transform.position = p + Vector3.up * (h + 0.4f);
-                bm.transform.rotation = Quaternion.LookRotation(f);
-                bm.transform.localScale = new Vector3(w * 2f + 1f, 1.5f, 2f);
-                bm.GetComponent<Renderer>().material = arch;
-                Destroy(bm.GetComponent<Collider>());
-            }
-        }
     }
 
-    /// <summary>Simple restart handler.</summary>
+    /// <summary>Simple restart/track-switch handler (backup for SceneSetup).</summary>
     public class RestartHandler : MonoBehaviour
     {
-        void Update()
-        {
-            var kb = UnityEngine.InputSystem.Keyboard.current;
-            if (kb != null && kb.rKey.wasPressedThisFrame)
-            {
-                UnityEngine.SceneManagement.SceneManager.LoadScene(
-                    UnityEngine.SceneManagement.SceneManager.GetActiveScene().buildIndex);
-            }
-        }
+        // Key handling is now in SceneSetup.Update()
+        // This class kept for compatibility but does nothing extra.
     }
 }
