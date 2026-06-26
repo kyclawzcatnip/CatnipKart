@@ -70,6 +70,7 @@ namespace CatnipCart.Track
             List<Vector2> uvs = new List<Vector2>();
 
             float totalLen = spline.TotalLength;
+            Vector3 prevRight = Vector3.zero;
             for (int i = 0; i <= resolution; i++)
             {
                 float t = (i / (float)resolution) * totalLen;
@@ -80,6 +81,12 @@ namespace CatnipCart.Track
                 if (Mathf.Abs(Vector3.Dot(fwd, up)) > 0.95f)
                     up = Vector3.forward;
                 Vector3 right = Vector3.Cross(up, fwd).normalized;
+
+                // Flip-correction: ensure right vector never flips between
+                // consecutive samples (prevents mesh inversion at switchbacks)
+                if (i > 0 && Vector3.Dot(right, prevRight) < 0)
+                    right = -right;
+                prevRight = right;
 
                 Vector3 leftEdge = center + right * (offset + width);
                 Vector3 rightEdge = center + right * offset;
